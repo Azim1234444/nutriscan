@@ -1,0 +1,102 @@
+rules_version = '2';
+
+// NutriScan meal storage.
+//
+// Every document lives under the user that owns it, and the only way in is as
+// that signed-in user. There is no public read or write anywhere in this file.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // True when the caller is signed in as the user who owns this path.
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // A number that is present, finite and not negative.
+    function isAmount(value) {
+      return value is number && value >= 0;
+    }
+
+    // Checks the nutrition block a client is allowed to write.
+    function isNutrition(data) {
+      return data.foodName is string
+        && data.foodName.size() > 0
+        && data.foodName.size() <= 200
+        && isAmount(data.estimatedPortionGrams)
+        && isAmount(data.calories)
+        && isAmount(data.proteinGrams)
+        && isAmount(data.carbohydratesGrams)
+        && isAmount(data.fatGrams)
+        && isAmount(data.fiberGrams);
+    }
+
+    function isValidMeal(userId, data) {
+      return data.userId == userId
+        && data.foodName is string
+        && data.foodName.size() > 0
+        && data.isEdited is bool
+        && data.current is map
+        && isNutrition(data.current)
+        && data.aiEstimate is map
+        && isNutrition(data.aiEstimate)
+        // Images are never stored in a document.
+        && !('imageBase64' in data)
+        && !('image' in data);
+    }
+
+    // Checks the profile a client is allowed to write.
+    function isValidProfile(userId, data) {
+      return data.uid == userId
+        && data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 100
+        && data.age is number && data.age >= 10 && data.age <= 100
+        && data.heightCm is number && data.heightCm >= 100 && data.heightCm <= 250
+        && data.weightKg is number && data.weightKg >= 30 && data.weightKg <= 300
+        && data.gender is string
+        && data.activityLevel is string
+        && data.goal is string
+        && isAmount(data.dailyCalories)
+        && isAmount(data.proteinGrams)
+        && isAmount(data.carbohydratesGrams)
+        && isAmount(data.fatGrams);
+    }
+
+    match /users/{userId} {
+      // The user document itself is not used yet.
+      allow read, write: if false;
+
+      // The nutrition profile. Firestore paths alternate collection and
+      // document, so the profile lives in a 'profile' collection holding one
+      // document per user.
+      match /profile/{profileId} {
+        allow read, delete: if isOwner(userId);
+
+        allow create, update: if isOwner(userId)
+          && isValidProfile(userId, request.resource.data);
+      }
+
+      match /meals/{mealId} {
+        allow read, delete: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && isValidMeal(userId, request.resource.data);
+
+        // An edit may change only what the person typed. The model's estimate
+        // and the moment the meal was logged are not theirs to rewrite, so
+        // both have to come back exactly as they went in. The app already
+        // leaves them out of an edit, which a merge keeps untouched; this is
+        // the same promise made where it cannot be worked around.
+        allow update: if isOwner(userId)
+          && isValidMeal(userId, request.resource.data)
+          && request.resource.data.aiEstimate == resource.data.aiEstimate
+          && request.resource.data.createdAt == resource.data.createdAt;
+      }
+    }
+
+    // Anything not matched above is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

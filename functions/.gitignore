@@ -1,0 +1,12 @@
+# Compiled output
+lib/
+
+# Dependencies
+node_modules/
+
+# Local secret values for the emulator - never commit real keys
+.secret.local
+
+# Firebase local state
+.firebase/
+*.log

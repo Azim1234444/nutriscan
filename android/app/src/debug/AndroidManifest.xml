@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Debug builds only.
+
+      The Firebase Functions emulator is served over plain HTTP on localhost,
+      and Android blocks cleartext traffic by default. This override applies to
+      the debug variant alone - the release manifest is untouched, so shipped
+      builds still refuse cleartext connections.
+    -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

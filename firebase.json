@@ -1,0 +1,63 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "nutriscan-a66ae",
+          "appId": "1:277644667344:android:51198cc43a7aa8ae8831d5",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "nutriscan-a66ae",
+          "configurations": {
+            "android": "1:277644667344:android:51198cc43a7aa8ae8831d5",
+            "ios": "1:277644667344:ios:94858f6c0a1078868831d5",
+            "macos": "1:277644667344:ios:94858f6c0a1078868831d5",
+            "web": "1:277644667344:web:0e0cd72dffea10ee8831d5",
+            "windows": "1:277644667344:web:11ddf4402097a2fc8831d5"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local",
+        "test"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run lint",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ]
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "functions": {
+      "port": 5001
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    },
+    "singleProjectMode": true
+  }
+}
