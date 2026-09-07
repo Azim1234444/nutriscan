@@ -51,12 +51,11 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyDBPn-i9SmXwQRbVUCuVh5JfTf3KpFYTf8',
-    appId: '1:277644667344:android:51198cc43a7aa8ae8831d5',
+    appId: '1:277644667344:android:f73c4e86ed889d128831d5',
     messagingSenderId: '277644667344',
     projectId: 'nutriscan-a66ae',
     storageBucket: 'nutriscan-a66ae.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyCWkQqPqY14x6psMdM7aV3GTJ4SwZVHT58',
     appId: '1:277644667344:ios:94858f6c0a1078868831d5',

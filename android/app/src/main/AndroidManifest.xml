@@ -1,8 +1,24 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Android's backup channels are switched off for this app.
+
+      Everything NutriScan keeps on the device is either a Firebase Auth
+      session or a Firestore cache of records the server already holds, so a
+      restore has nothing to recover that signing in would not rebuild - while
+      a restored session would hand an authenticated account to a second
+      device.
+
+      allowBackup="false" covers Auto Backup and key/value backup. It is not
+      sufficient alone: from Android 12 it stops cloud backup but leaves
+      device-to-device transfer running, which is what the referenced rules
+      turn off.
+    -->
     <application
-        android:label="nutriscan"
+        android:label="NutriScan"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"
