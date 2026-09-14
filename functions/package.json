@@ -2,6 +2,7 @@
   "name": "nutriscan-functions",
   "description": "Cloud Functions backend for NutriScan food analysis",
   "private": true,
+  "type": "module",
   "main": "lib/index.js",
   "engines": {
     "node": "22"

@@ -1,7 +1,7 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 
-import { BackendConfigurationError } from "./auth";
+import { BackendConfigurationError } from "./auth.js";
 
 export interface RateLimitDecision {
   allowed: boolean;

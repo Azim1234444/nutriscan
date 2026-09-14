@@ -1,19 +1,23 @@
 import { HttpsError } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions";
 
-import {
+import type {
   AnalyzeFoodImageRequest,
   AnalyzeFoodImageResponse,
-} from "../types/nutrition";
-import { GeminiClient, GeminiError } from "./gemini-client";
-import { MalformedAnalysisError, parseAnalysisResponse } from "./parse-analysis";
+} from "../types/nutrition.js";
+import { GeminiError } from "./gemini-client.js";
+import type { GeminiClient } from "./gemini-client.js";
+import {
+  MalformedAnalysisError,
+  parseAnalysisResponse,
+} from "./parse-analysis.js";
 import {
   decodedSizeInBytes,
   parseAnalyzeFoodImageRequest,
   RequestValidationError,
-} from "./validate-request";
+} from "./validate-request.js";
 
-export { decodedSizeInBytes } from "./validate-request";
+export { decodedSizeInBytes } from "./validate-request.js";
 
 /**
  * Checks untrusted callable input and returns it in a typed shape.

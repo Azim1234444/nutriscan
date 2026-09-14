@@ -7,8 +7,9 @@
   },
   "scripts": {
     "backend:typecheck": "tsc --noEmit",
-    "backend:lint": "eslint api backend backend-test",
-    "backend:test": "vitest run"
+    "backend:lint": "eslint api backend backend-test scripts",
+    "backend:test": "vitest run && npm run backend:runtime-check",
+    "backend:runtime-check": "node scripts/verify-backend-runtime.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.22.0",

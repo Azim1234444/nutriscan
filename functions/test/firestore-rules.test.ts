@@ -8,8 +8,9 @@
  *   npm --prefix functions run test:rules
  */
 
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   RulesTestEnvironment,
@@ -18,6 +19,8 @@ import {
   initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Where the emulator is listening, as the emulator itself reported it.

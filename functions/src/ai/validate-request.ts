@@ -1,9 +1,11 @@
 import {
-  AnalyzeFoodImageRequest,
   MAX_IMAGE_BYTES,
   SUPPORTED_MIME_TYPES,
+} from "../types/nutrition.js";
+import type {
+  AnalyzeFoodImageRequest,
   SupportedMimeType,
-} from "../types/nutrition";
+} from "../types/nutrition.js";
 
 /** Standard base64 alphabet with optional padding - no data URLs or whitespace. */
 const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;

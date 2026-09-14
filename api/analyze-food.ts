@@ -1,6 +1,10 @@
-import { createAnalyzeFoodHandler, geminiClientFromEnvironment } from "../backend/analyze-food-handler";
-import { createFirebaseTokenVerifier } from "../backend/auth";
-import { createUserRateLimiter, UserRateLimiter } from "../backend/rate-limit";
+import {
+  createAnalyzeFoodHandler,
+  geminiClientFromEnvironment,
+} from "../backend/analyze-food-handler.js";
+import { createFirebaseTokenVerifier } from "../backend/auth.js";
+import { createUserRateLimiter } from "../backend/rate-limit.js";
+import type { UserRateLimiter } from "../backend/rate-limit.js";
 
 let rateLimiter: UserRateLimiter | undefined;
 

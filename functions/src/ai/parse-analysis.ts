@@ -1,8 +1,8 @@
-import {
+import type {
   AnalyzeFoodImageResponse,
   NutritionAnalysis,
   NutritionItem,
-} from "../types/nutrition";
+} from "../types/nutrition.js";
 
 /**
  * Raised when the model's JSON does not match the agreed schema.

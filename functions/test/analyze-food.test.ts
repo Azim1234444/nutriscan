@@ -5,14 +5,16 @@ import {
   decodedSizeInBytes,
   handleAnalyzeFoodImage,
   validateAnalyzeFoodImageRequest,
-} from "../src/ai/analyze-food";
+} from "../src/ai/analyze-food.js";
 import {
-  FoodImage,
-  GeminiClient,
   GeminiError,
   createGeminiClient,
-} from "../src/ai/gemini-client";
-import { MAX_IMAGE_BYTES } from "../src/types/nutrition";
+} from "../src/ai/gemini-client.js";
+import type {
+  FoodImage,
+  GeminiClient,
+} from "../src/ai/gemini-client.js";
+import { MAX_IMAGE_BYTES } from "../src/types/nutrition.js";
 
 /** A short but structurally valid base64 payload. */
 const VALID_BASE64 = Buffer.from("pretend-jpeg-bytes").toString("base64");

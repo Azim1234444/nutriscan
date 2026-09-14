@@ -1,19 +1,22 @@
 import {
-  GeminiClient,
   GeminiError,
   createGeminiClient,
-} from "../functions/src/ai/gemini-client";
+} from "../functions/src/ai/gemini-client.js";
+import type {
+  GeminiClient,
+} from "../functions/src/ai/gemini-client.js";
 import {
   MalformedAnalysisError,
   parseAnalysisResponse,
-} from "../functions/src/ai/parse-analysis";
+} from "../functions/src/ai/parse-analysis.js";
 import {
   RequestValidationError,
   parseAnalyzeFoodImageRequest,
-} from "../functions/src/ai/validate-request";
-import { MAX_IMAGE_BYTES } from "../functions/src/types/nutrition";
-import { BackendConfigurationError, TokenVerifier } from "./auth";
-import { UserRateLimiter } from "./rate-limit";
+} from "../functions/src/ai/validate-request.js";
+import { MAX_IMAGE_BYTES } from "../functions/src/types/nutrition.js";
+import { BackendConfigurationError } from "./auth.js";
+import type { TokenVerifier } from "./auth.js";
+import type { UserRateLimiter } from "./rate-limit.js";
 
 // A 3 MiB image becomes exactly 4 MiB when base64 encoded. Reserve 1 KiB for
 // the JSON field names and MIME type while staying below Vercel's 4.5 MB cap.

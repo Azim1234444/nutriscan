@@ -51,6 +51,7 @@ app.*.map.json
 functions/node_modules/
 functions/lib/
 node_modules/
+.backend-runtime/
 .env.local
 .env.*.local
 # Local secret values for the emulator - the real key lives in Secret Manager

@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  AnalyzeFoodDependencies,
   createAnalyzeFoodHandler,
-} from "../backend/analyze-food-handler";
-import { TokenVerifier } from "../backend/auth";
-import { UserRateLimiter } from "../backend/rate-limit";
-import { FoodImage, GeminiClient } from "../functions/src/ai/gemini-client";
-import { MAX_IMAGE_BYTES } from "../functions/src/types/nutrition";
+} from "../backend/analyze-food-handler.js";
+import type { AnalyzeFoodDependencies } from "../backend/analyze-food-handler.js";
+import type { TokenVerifier } from "../backend/auth.js";
+import type { UserRateLimiter } from "../backend/rate-limit.js";
+import type {
+  FoodImage,
+  GeminiClient,
+} from "../functions/src/ai/gemini-client.js";
+import { MAX_IMAGE_BYTES } from "../functions/src/types/nutrition.js";
 
 const imageBase64 = Buffer.from("pretend-image").toString("base64");
 const requestBody = { imageBase64, mimeType: "image/jpeg" };

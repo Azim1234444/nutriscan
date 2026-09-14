@@ -2,9 +2,9 @@ import { setGlobalOptions } from "firebase-functions/v2";
 import { CallableRequest, onCall } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 
-import { handleAnalyzeFoodImage } from "./ai/analyze-food";
-import { createGeminiClient } from "./ai/gemini-client";
-import { AnalyzeFoodImageResponse } from "./types/nutrition";
+import { handleAnalyzeFoodImage } from "./ai/analyze-food.js";
+import { createGeminiClient } from "./ai/gemini-client.js";
+import type { AnalyzeFoodImageResponse } from "./types/nutrition.js";
 
 // 2nd generation defaults for every function in this codebase.
 setGlobalOptions({ region: "us-central1", maxInstances: 10 });
