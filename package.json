@@ -9,7 +9,8 @@
     "backend:typecheck": "tsc --noEmit",
     "backend:lint": "eslint api backend backend-test scripts",
     "backend:test": "vitest run && npm run backend:runtime-check",
-    "backend:runtime-check": "node scripts/verify-backend-runtime.mjs"
+    "backend:runtime-check": "node --no-experimental-require-module scripts/verify-backend-runtime.mjs",
+    "backend:dependencies": "npm ls firebase-admin jwks-rsa jose"
   },
   "dependencies": {
     "@google/genai": "^2.22.0",
@@ -23,5 +24,10 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "jwks-rsa": {
+      "jose": "4.15.9"
+    }
   }
 }
