@@ -4,32 +4,16 @@ import { logger } from "firebase-functions";
 import {
   AnalyzeFoodImageRequest,
   AnalyzeFoodImageResponse,
-  MAX_IMAGE_BYTES,
-  SUPPORTED_MIME_TYPES,
-  SupportedMimeType,
 } from "../types/nutrition";
 import { GeminiClient, GeminiError } from "./gemini-client";
 import { MalformedAnalysisError, parseAnalysisResponse } from "./parse-analysis";
+import {
+  decodedSizeInBytes,
+  parseAnalyzeFoodImageRequest,
+  RequestValidationError,
+} from "./validate-request";
 
-/** Standard base64 alphabet with optional padding - no data URLs, no whitespace. */
-const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
-
-/**
- * Size of the decoded image, worked out from the base64 length so an
- * oversized payload can be rejected without allocating a buffer for it.
- */
-export function decodedSizeInBytes(base64: string): number {
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-  return Math.floor((base64.length * 3) / 4) - padding;
-}
-
-function isSupportedMimeType(value: string): value is SupportedMimeType {
-  return (SUPPORTED_MIME_TYPES as readonly string[]).includes(value);
-}
-
-function reject(message: string): never {
-  throw new HttpsError("invalid-argument", message);
-}
+export { decodedSizeInBytes } from "./validate-request";
 
 /**
  * Checks untrusted callable input and returns it in a typed shape.
@@ -42,44 +26,14 @@ function reject(message: string): never {
 export function validateAnalyzeFoodImageRequest(
   data: unknown,
 ): AnalyzeFoodImageRequest {
-  if (typeof data !== "object" || data === null || Array.isArray(data)) {
-    reject("Request data must be an object.");
+  try {
+    return parseAnalyzeFoodImageRequest(data);
+  } catch (error) {
+    if (error instanceof RequestValidationError) {
+      throw new HttpsError("invalid-argument", error.message);
+    }
+    throw error;
   }
-
-  const { imageBase64, mimeType } = data as Record<string, unknown>;
-
-  if (imageBase64 === undefined || imageBase64 === null) {
-    reject("imageBase64 is required.");
-  }
-  if (typeof imageBase64 !== "string") {
-    reject("imageBase64 must be a string.");
-  }
-  if (imageBase64.length === 0 || imageBase64.trim().length === 0) {
-    reject("imageBase64 must not be empty.");
-  }
-
-  if (typeof mimeType !== "string" || mimeType.length === 0) {
-    reject("mimeType is required.");
-  }
-  if (!isSupportedMimeType(mimeType)) {
-    reject(`mimeType must be one of ${SUPPORTED_MIME_TYPES.join(", ")}.`);
-  }
-
-  // Size is checked before the pattern so a huge payload is dropped early.
-  const sizeInBytes = decodedSizeInBytes(imageBase64);
-  if (sizeInBytes > MAX_IMAGE_BYTES) {
-    reject(
-      `Image is too large: ${sizeInBytes} bytes, maximum is ${MAX_IMAGE_BYTES}.`,
-    );
-  }
-
-  if (imageBase64.length % 4 !== 0 || !BASE64_PATTERN.test(imageBase64)) {
-    reject(
-      "imageBase64 must be base64 encoded image bytes without a data URL prefix.",
-    );
-  }
-
-  return { imageBase64, mimeType };
 }
 
 /** Turns a Gemini failure into the callable error code that fits it. */

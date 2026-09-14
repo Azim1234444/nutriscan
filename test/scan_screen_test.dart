@@ -36,7 +36,7 @@ class _FakeImagePickerService implements ImagePickerService {
   }
 }
 
-/// Returns a canned outcome instead of calling the Cloud Function.
+/// Returns a canned outcome instead of calling the analysis API.
 class _FakeFoodAnalysisService implements FoodAnalysisService {
   _FakeFoodAnalysisService(this.outcome);
 

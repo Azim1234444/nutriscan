@@ -50,6 +50,9 @@ app.*.map.json
 # Firebase / Cloud Functions
 functions/node_modules/
 functions/lib/
+node_modules/
+.env.local
+.env.*.local
 # Local secret values for the emulator - the real key lives in Secret Manager
 functions/.secret.local
 .firebase/
@@ -59,3 +62,5 @@ ui-debug.log
 
 .vscode/
 android/build/
+
+.env

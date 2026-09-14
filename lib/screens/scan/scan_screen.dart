@@ -14,7 +14,7 @@ import '../../widgets/app_card.dart';
 /// The Scan tab.
 ///
 /// The user takes or picks a photo, previews it, and sends it to the
-/// `analyzeFoodImage` Cloud Function. The photo stays in memory - it is not
+/// authenticated food-analysis API. The photo stays in memory - it is not
 /// saved anywhere - and the app never talks to the AI model directly.
 class ScanScreen extends StatefulWidget {
   const ScanScreen({

@@ -16,13 +16,13 @@ export const SUPPORTED_MIME_TYPES = [
 export type SupportedMimeType = (typeof SUPPORTED_MIME_TYPES)[number];
 
 /**
- * Largest decoded image the callable accepts, in bytes.
+ * Largest decoded image either backend accepts, in bytes.
  *
  * The app already downscales photos to 1600px at 85% quality (a few hundred
- * KB), so 5 MB is generous while keeping the request well under the callable
- * payload limit.
+ * KB). Three MiB expands to four MiB in base64, leaving useful headroom for
+ * the JSON envelope under Vercel's 4.5 MB request-body limit.
  */
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 
 /** What the Flutter client sends to `analyzeFoodImage`. */
 export interface AnalyzeFoodImageRequest {

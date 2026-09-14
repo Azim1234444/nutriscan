@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -9,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'app/nutriscan_app.dart';
 import 'firebase_options.dart';
 
-/// Point Firebase calls at the local emulators instead of production.
+/// Point Firebase Auth and Firestore at local emulators instead of production.
 ///
 /// Debug builds only: release builds always talk to the real project, so
 /// nothing here can affect production data.
@@ -23,7 +22,6 @@ const bool _useEmulators = kDebugMode;
 /// Emulator host "127.0.0.1" to "10.0.2.2"`. The tunnels below are belt and
 /// braces for tooling that does no such rewriting; the app does not need them:
 ///
-///   adb reverse tcp:5001 tcp:5001
 ///   adb reverse tcp:8080 tcp:8080
 ///   adb reverse tcp:9099 tcp:9099
 ///
@@ -39,7 +37,6 @@ const bool _useEmulators = kDebugMode;
 ///
 ///   adb shell pm clear com.azim.nutriscan
 const String _emulatorHost = '127.0.0.1';
-const int _functionsEmulatorPort = 5001;
 const int _firestoreEmulatorPort = 8080;
 const int _authEmulatorPort = 9099;
 
@@ -75,10 +72,6 @@ Future<void> _initializeFirebase() async {
 }
 
 Future<void> _connectEmulators() async {
-  FirebaseFunctions.instance.useFunctionsEmulator(
-    _emulatorHost,
-    _functionsEmulatorPort,
-  );
   FirebaseFirestore.instance.useFirestoreEmulator(
     _emulatorHost,
     _firestoreEmulatorPort,

@@ -65,8 +65,10 @@ class ImagePickerService {
 
   final ImagePicker _picker;
 
-  /// Longest edge of the image we keep, in pixels. Full-size camera photos are
-  /// far larger than anything the UI (or a later AI request) needs.
+  /// Longest edge of the image we keep, in pixels. Together with JPEG quality
+  /// below, this compresses normal camera/gallery photos before analysis while
+  /// retaining enough detail for food recognition. The analysis service also
+  /// enforces a hard 3 MiB byte ceiling before any upload.
   static const double _maxDimension = 1600;
 
   /// JPEG quality after resizing.

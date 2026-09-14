@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "api/**/*.ts",
+    "backend/**/*.ts",
+    "backend-test/**/*.ts",
+    "functions/src/ai/gemini-client.ts",
+    "functions/src/ai/parse-analysis.ts",
+    "functions/src/ai/validate-request.ts",
+    "functions/src/types/nutrition.ts"
+  ]
+}

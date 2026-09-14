@@ -1,16 +1,4 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { defineSecret } from "firebase-functions/params";
-
-/**
- * Handle to the Gemini API key stored in Google Secret Manager.
- *
- * `defineSecret` only declares the binding - the value is injected into the
- * function's environment at runtime and never appears in this repository, in
- * the deployed client bundle, or in logs. Functions that need it must list it
- * in their `secrets` option. Locally the Functions emulator reads it from the
- * git-ignored `functions/.secret.local`.
- */
-export const geminiApiKey = defineSecret("GEMINI_API_KEY");
 
 /**
  * Model used for food analysis.

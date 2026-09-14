@@ -1,12 +1,16 @@
 import { setGlobalOptions } from "firebase-functions/v2";
 import { CallableRequest, onCall } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
 
 import { handleAnalyzeFoodImage } from "./ai/analyze-food";
-import { createGeminiClient, geminiApiKey } from "./ai/gemini-client";
+import { createGeminiClient } from "./ai/gemini-client";
 import { AnalyzeFoodImageResponse } from "./types/nutrition";
 
 // 2nd generation defaults for every function in this codebase.
 setGlobalOptions({ region: "us-central1", maxInstances: 10 });
+
+/** Gemini key binding retained for the existing callable backend. */
+const geminiApiKey = defineSecret("GEMINI_API_KEY");
 
 /** True while running under the Functions emulator. */
 const runningInEmulator = process.env.FUNCTIONS_EMULATOR === "true";

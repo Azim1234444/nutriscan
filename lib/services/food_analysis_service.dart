@@ -2,9 +2,18 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 
+import '../config/api_config.dart';
 import '../models/food_analysis_result.dart';
+
+/// A 3 MiB image expands to 4 MiB in base64, leaving room for the JSON
+/// envelope below Vercel's 4.5 MB request-body limit.
+const int maxFoodAnalysisImageBytes = 3 * 1024 * 1024;
+
+const String _imageTooLargeMessage =
+    'That photo is too large. Choose a smaller image and try again.';
 
 /// Result of one analysis attempt.
 ///
@@ -35,42 +44,85 @@ class FoodAnalysisFailure extends FoodAnalysisOutcome {
   final String message;
 }
 
-/// Sends a food photo to the `analyzeFoodImage` callable and returns what came
-/// back.
+/// Sends a food photo to NutriScan's authenticated analysis API.
 ///
 /// The app never talks to Gemini directly and never holds an AI API key: the
-/// photo goes to the Cloud Function, which keeps the key server-side.
+/// photo goes to the Vercel backend, which keeps the key server-side.
 class FoodAnalysisService {
-  FoodAnalysisService({FirebaseFunctions? functions})
-    : _functions = functions ?? FirebaseFunctions.instance;
+  FoodAnalysisService({
+    FirebaseAuth? auth,
+    http.Client? client,
+    Uri? endpoint,
+    Duration timeout = const Duration(seconds: 70),
+  }) : this._(
+         auth: auth ?? FirebaseAuth.instance,
+         client: client ?? http.Client(),
+         endpoint: endpoint,
+         timeout: timeout,
+       );
 
-  final FirebaseFunctions _functions;
+  FoodAnalysisService._({
+    required this._auth,
+    required this._client,
+    required this._endpoint,
+    required this._timeout,
+  });
 
-  /// Give up if the whole round trip takes longer than this.
-  static const Duration _timeout = Duration(seconds: 70);
+  final FirebaseAuth _auth;
+  final http.Client _client;
+  final Uri? _endpoint;
+  final Duration _timeout;
 
   /// Analyses [image] and never throws - failures come back as
   /// [FoodAnalysisFailure].
   Future<FoodAnalysisOutcome> analyze(File image) async {
     try {
-      final String imageBase64 = base64Encode(await image.readAsBytes());
+      final User? user = _auth.currentUser;
+      final String? idToken = await user?.getIdToken();
+      if (idToken == null || idToken.trim().isEmpty) {
+        return const FoodAnalysisFailure(
+          'The app is not allowed to run an analysis right now.',
+        );
+      }
 
-      final HttpsCallableResult<Object?> response = await _functions
-          .httpsCallable('analyzeFoodImage')
-          .call<Object?>(<String, Object?>{
-            'imageBase64': imageBase64,
-            'mimeType': mimeTypeFor(image.path),
-          })
+      final List<int> imageBytes = await image.readAsBytes();
+      if (imageBytes.length > maxFoodAnalysisImageBytes) {
+        return const FoodAnalysisFailure(_imageTooLargeMessage);
+      }
+
+      final String imageBase64 = base64Encode(imageBytes);
+      final http.Response response = await _client
+          .post(
+            _endpoint ?? ApiConfig.analyzeFoodEndpoint,
+            headers: <String, String>{
+              HttpHeaders.authorizationHeader: 'Bearer $idToken',
+              HttpHeaders.contentTypeHeader: 'application/json',
+            },
+            body: jsonEncode(<String, Object?>{
+              'imageBase64': imageBase64,
+              'mimeType': mimeTypeFor(image.path),
+            }),
+          )
           .timeout(_timeout);
 
-      return _readResponse(response.data);
-    } on FirebaseFunctionsException catch (error) {
-      return FoodAnalysisFailure(_messageForCallableError(error));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return FoodAnalysisFailure(_messageForHttpError(response));
+      }
+
+      return _readResponse(jsonDecode(response.body));
+    } on FirebaseAuthException {
+      return const FoodAnalysisFailure(
+        'The app is not allowed to run an analysis right now.',
+      );
     } on TimeoutException {
       return const FoodAnalysisFailure(
         'The analysis took too long. Please try again.',
       );
     } on SocketException {
+      return const FoodAnalysisFailure(
+        'No internet connection. Connect and try again.',
+      );
+    } on http.ClientException {
       return const FoodAnalysisFailure(
         'No internet connection. Connect and try again.',
       );
@@ -120,23 +172,46 @@ class FoodAnalysisService {
     }
   }
 
-  /// Maps a callable error code to something worth showing the user.
-  String _messageForCallableError(FirebaseFunctionsException error) {
-    switch (error.code) {
-      case 'unavailable':
-        return 'The analysis service is busy. Please try again in a moment.';
-      case 'resource-exhausted':
-        return 'The analysis quota has run out. Please try again later.';
-      case 'deadline-exceeded':
-        return 'The analysis took too long. Please try again.';
-      case 'invalid-argument':
-        return 'That photo could not be used. Try a different one.';
-      case 'unauthenticated':
-      case 'permission-denied':
-        return 'The app is not allowed to run an analysis right now.';
-      default:
-        return 'The photo could not be analysed. Please try again.';
+  /// Maps HTTP status and the backend's stable error code to safe UI text.
+  String _messageForHttpError(http.Response response) {
+    String? code;
+    try {
+      final Object? decoded = jsonDecode(response.body);
+      if (decoded is Map && decoded['error'] is Map) {
+        final Object? rawCode = (decoded['error'] as Map)['code'];
+        if (rawCode is String) code = rawCode;
+      }
+    } on FormatException {
+      // Status-based fallback below is intentionally independent of body text.
     }
+
+    if (response.statusCode == 401 || code == 'unauthenticated') {
+      return 'The app is not allowed to run an analysis right now.';
+    }
+    if (response.statusCode == 429 || code == 'rate_limited') {
+      return 'You have reached the scan limit. Please try again later.';
+    }
+    if (response.statusCode == 413 || code == 'image_too_large') {
+      return _imageTooLargeMessage;
+    }
+    if (response.statusCode == 400 || code == 'invalid_argument') {
+      return 'That photo could not be used. Try a different one.';
+    }
+    if (response.statusCode == 408 || response.statusCode == 504) {
+      return 'The analysis took too long. Please try again.';
+    }
+    if (code == 'malformed_response') {
+      return 'The analysis came back in an unexpected format. Please try again.';
+    }
+    if (response.statusCode >= 500) {
+      if (code == 'unavailable') {
+        return 'The analysis service is busy. Please try again in a moment.';
+      }
+      if (code == 'model_rate_limited') {
+        return 'The analysis quota has run out. Please try again later.';
+      }
+    }
+    return 'The photo could not be analysed. Please try again.';
   }
 }
 
