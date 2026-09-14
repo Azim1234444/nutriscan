@@ -46,10 +46,25 @@ class FakeGeminiClient implements GeminiClient {
   }
 }
 
+class SequencedGeminiClient implements GeminiClient {
+  calls: FoodImage[] = [];
+
+  constructor(private readonly outcomes: readonly unknown[]) {}
+
+  async analyzeFoodImage(image: FoodImage): Promise<unknown> {
+    this.calls.push(image);
+    const outcome = this.outcomes[this.calls.length - 1];
+    if (outcome instanceof Error) throw outcome;
+    return outcome;
+  }
+}
+
 function dependencies(options?: {
   verifier?: TokenVerifier;
   limiter?: UserRateLimiter;
-  gemini?: FakeGeminiClient;
+  gemini?: GeminiClient;
+  sleep?: (milliseconds: number) => Promise<void>;
+  random?: () => number;
 }): AnalyzeFoodDependencies {
   const gemini = options?.gemini ?? new FakeGeminiClient();
   return {
@@ -60,7 +75,21 @@ function dependencies(options?: {
       options?.limiter ??
       ({ check: async () => ({ allowed: true }) } satisfies UserRateLimiter),
     createGeminiClient: () => gemini,
+    sleep: options?.sleep,
+    random: options?.random,
   };
+}
+
+function retryableGeminiError(): GeminiError {
+  return new GeminiError("unavailable", "The model is busy.", {
+    httpStatus: 503,
+    upstreamCode: "UNAVAILABLE",
+    upstreamMessage: "The service is temporarily unavailable.",
+    model: "gemini-3.5-flash",
+    retryable: true,
+    sdkErrorName: "ApiError",
+    sdkErrorType: "ApiError",
+  });
 }
 
 function post(body: unknown = requestBody, token = "valid-token"): Request {
@@ -82,6 +111,7 @@ function base64OfSize(bytes: number): string {
 
 describe("POST /api/analyze-food", () => {
   it("returns the existing nutrition response contract", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
     const gemini = new FakeGeminiClient();
     const response = await createAnalyzeFoodHandler(dependencies({ gemini }))(post());
 
@@ -103,6 +133,132 @@ describe("POST /api/analyze-food", () => {
       },
     });
     expect(gemini.calls).toEqual([{ data: imageBase64, mimeType: "image/jpeg" }]);
+  });
+
+  it("succeeds after one retryable failure", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const delays: number[] = [];
+    const limiter = { check: vi.fn(async () => ({ allowed: true })) };
+    const gemini = new SequencedGeminiClient([
+      retryableGeminiError(),
+      modelResponse,
+    ]);
+
+    const response = await createAnalyzeFoodHandler(
+      dependencies({
+        gemini,
+        limiter,
+        random: () => 0,
+        sleep: async (milliseconds) => {
+          delays.push(milliseconds);
+        },
+      }),
+    )(post());
+
+    expect(response.status).toBe(200);
+    expect(gemini.calls).toHaveLength(2);
+    expect(limiter.check).toHaveBeenCalledTimes(1);
+    expect(delays).toEqual([750]);
+    expect(warning).toHaveBeenCalledWith(
+      "Gemini food analysis retry scheduled",
+      expect.objectContaining({
+        attempt: 1,
+        nextAttempt: 2,
+        retryScheduled: true,
+        retryDelayMs: 750,
+      }),
+    );
+  });
+
+  it("succeeds after two retryable failures", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const delays: number[] = [];
+    const gemini = new SequencedGeminiClient([
+      retryableGeminiError(),
+      retryableGeminiError(),
+      modelResponse,
+    ]);
+
+    const response = await createAnalyzeFoodHandler(
+      dependencies({
+        gemini,
+        random: () => 0,
+        sleep: async (milliseconds) => {
+          delays.push(milliseconds);
+        },
+      }),
+    )(post());
+
+    expect(response.status).toBe(200);
+    expect(gemini.calls).toHaveLength(3);
+    expect(delays).toEqual([750, 1500]);
+  });
+
+  it("returns the existing 503 after three retryable failures", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const limiter = { check: vi.fn(async () => ({ allowed: true })) };
+    const gemini = new SequencedGeminiClient([
+      retryableGeminiError(),
+      retryableGeminiError(),
+      retryableGeminiError(),
+    ]);
+
+    const response = await createAnalyzeFoodHandler(
+      dependencies({
+        gemini,
+        limiter,
+        random: () => 0,
+        sleep: async () => undefined,
+      }),
+    )(post());
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "unavailable",
+        message: "The analysis service is busy. Please try again in a moment.",
+      },
+    });
+    expect(gemini.calls).toHaveLength(3);
+    expect(limiter.check).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(
+      "Gemini food analysis request failed",
+      expect.objectContaining({
+        attempt: 3,
+        retryScheduled: false,
+        retryExhausted: true,
+      }),
+    );
+  });
+
+  it("does not retry a non-retryable Gemini failure", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sleep = vi.fn(async () => undefined);
+    const gemini = new SequencedGeminiClient([
+      new GeminiError("failed", "The model request failed.", {
+        httpStatus: 400,
+        upstreamCode: "INVALID_ARGUMENT",
+        upstreamMessage: "Invalid request.",
+        model: "gemini-3.5-flash",
+        retryable: false,
+        sdkErrorName: "ApiError",
+        sdkErrorType: "ApiError",
+      }),
+      modelResponse,
+    ]);
+
+    const response = await createAnalyzeFoodHandler(
+      dependencies({ gemini, sleep }),
+    )(post());
+
+    expect(response.status).toBe(500);
+    expect(gemini.calls).toHaveLength(1);
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("rejects a missing auth token before Gemini", async () => {
@@ -163,6 +319,8 @@ describe("POST /api/analyze-food", () => {
   });
 
   it("logs safe Gemini diagnostics without changing the client response", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const gemini = new FakeGeminiClient(
       undefined,
@@ -177,7 +335,9 @@ describe("POST /api/analyze-food", () => {
       }),
     );
 
-    const response = await createAnalyzeFoodHandler(dependencies({ gemini }))(post());
+    const response = await createAnalyzeFoodHandler(
+      dependencies({ gemini, sleep: async () => undefined }),
+    )(post());
 
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({
@@ -187,6 +347,10 @@ describe("POST /api/analyze-food", () => {
       },
     });
     expect(log).toHaveBeenCalledWith("Gemini food analysis request failed", {
+      attempt: 3,
+      maxAttempts: 3,
+      retryScheduled: false,
+      retryExhausted: true,
       kind: "unavailable",
       httpStatus: 503,
       upstreamCode: "UNAVAILABLE",
@@ -199,6 +363,7 @@ describe("POST /api/analyze-food", () => {
   });
 
   it("rejects malformed model output", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const gemini = new FakeGeminiClient({ ...modelResponse, calories: "510" });
 
@@ -208,6 +373,7 @@ describe("POST /api/analyze-food", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "malformed_response" },
     });
+    expect(gemini.calls).toHaveLength(1);
   });
 
   it("rejects unsupported methods and malformed requests", async () => {

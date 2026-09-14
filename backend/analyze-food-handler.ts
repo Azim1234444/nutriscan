@@ -22,11 +22,16 @@ import type { UserRateLimiter } from "./rate-limit.js";
 // the JSON field names and MIME type while staying below Vercel's 4.5 MB cap.
 const MAX_HTTP_BODY_BYTES =
   Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 1024;
+const GEMINI_MAX_ATTEMPTS = 3;
+const GEMINI_RETRY_BASE_DELAY_MS = 750;
+const GEMINI_RETRY_JITTER_MS = 250;
 
 export interface AnalyzeFoodDependencies {
   tokenVerifier: TokenVerifier;
   rateLimiter: UserRateLimiter;
   createGeminiClient(): GeminiClient;
+  sleep?(milliseconds: number): Promise<void>;
+  random?(): number;
 }
 
 interface ErrorBody {
@@ -48,6 +53,14 @@ function bearerToken(request: Request): string | null {
   if (!value) return null;
   const match = /^Bearer ([^\s]+)$/i.exec(value);
   return match?.[1] ?? null;
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function retryDelay(milliseconds: number, random: () => number): number {
+  return milliseconds + Math.floor(random() * GEMINI_RETRY_JITTER_MS);
 }
 
 async function readJsonBody(request: Request): Promise<unknown> {
@@ -168,11 +181,49 @@ export function createAnalyzeFoodHandler(
       );
     }
 
+    let geminiAttempts = 0;
     try {
-      const raw = await client.analyzeFoodImage({
-        data: image.imageBase64,
-        mimeType: image.mimeType,
-      });
+      let raw: unknown;
+      for (let attempt = 1; attempt <= GEMINI_MAX_ATTEMPTS; attempt += 1) {
+        geminiAttempts = attempt;
+        console.info("Gemini food analysis attempt", {
+          attempt,
+          maxAttempts: GEMINI_MAX_ATTEMPTS,
+        });
+
+        try {
+          raw = await client.analyzeFoodImage({
+            data: image.imageBase64,
+            mimeType: image.mimeType,
+          });
+          break;
+        } catch (error) {
+          const retryScheduled =
+            error instanceof GeminiError &&
+            error.diagnostics.retryable &&
+            attempt < GEMINI_MAX_ATTEMPTS;
+          if (!retryScheduled) throw error;
+
+          const delayMs = retryDelay(
+            GEMINI_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+            dependencies.random ?? Math.random,
+          );
+          console.warn("Gemini food analysis retry scheduled", {
+            attempt,
+            nextAttempt: attempt + 1,
+            maxAttempts: GEMINI_MAX_ATTEMPTS,
+            retryScheduled: true,
+            retryDelayMs: delayMs,
+            kind: error.kind,
+            httpStatus: error.diagnostics.httpStatus,
+            upstreamCode: error.diagnostics.upstreamCode,
+            model: error.diagnostics.model,
+            retryable: error.diagnostics.retryable,
+          });
+          await (dependencies.sleep ?? sleep)(delayMs);
+        }
+      }
+
       return Response.json(parseAnalysisResponse(raw));
     } catch (error) {
       if (error instanceof MalformedAnalysisError) {
@@ -185,6 +236,12 @@ export function createAnalyzeFoodHandler(
       }
       if (error instanceof GeminiError) {
         console.error("Gemini food analysis request failed", {
+          attempt: geminiAttempts,
+          maxAttempts: GEMINI_MAX_ATTEMPTS,
+          retryScheduled: false,
+          retryExhausted:
+            error.diagnostics.retryable &&
+            geminiAttempts === GEMINI_MAX_ATTEMPTS,
           kind: error.kind,
           ...error.diagnostics,
         });
