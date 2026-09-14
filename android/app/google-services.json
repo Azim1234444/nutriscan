@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:277644667344:android:3faf0131b93b620f8831d5",
+        "android_client_info": {
+          "package_name": "com.azim.nutriscan"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDBPn-i9SmXwQRbVUCuVh5JfTf3KpFYTf8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:277644667344:android:51198cc43a7aa8ae8831d5",
         "android_client_info": {
           "package_name": "com.example.nutriscan"

@@ -51,7 +51,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyDBPn-i9SmXwQRbVUCuVh5JfTf3KpFYTf8',
-    appId: '1:277644667344:android:f73c4e86ed889d128831d5',
+    appId: '1:277644667344:android:3faf0131b93b620f8831d5',
     messagingSenderId: '277644667344',
     projectId: 'nutriscan-a66ae',
     storageBucket: 'nutriscan-a66ae.firebasestorage.app',

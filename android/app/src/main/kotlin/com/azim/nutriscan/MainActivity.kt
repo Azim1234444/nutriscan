@@ -1,4 +1,4 @@
-package com.nutriscan.app
+package com.azim.nutriscan
 
 import io.flutter.embedding.android.FlutterActivity
 

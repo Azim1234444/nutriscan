@@ -4,7 +4,7 @@
       "android": {
         "default": {
           "projectId": "nutriscan-a66ae",
-          "appId": "1:277644667344:android:f73c4e86ed889d128831d5",
+          "appId": "1:277644667344:android:3faf0131b93b620f8831d5",
           "fileOutput": "android/app/google-services.json"
         }
       },
@@ -12,7 +12,7 @@
         "lib/firebase_options.dart": {
           "projectId": "nutriscan-a66ae",
           "configurations": {
-            "android": "1:277644667344:android:f73c4e86ed889d128831d5",
+            "android": "1:277644667344:android:3faf0131b93b620f8831d5",
             "ios": "1:277644667344:ios:94858f6c0a1078868831d5",
             "macos": "1:277644667344:ios:94858f6c0a1078868831d5",
             "web": "1:277644667344:web:0e0cd72dffea10ee8831d5",

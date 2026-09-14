@@ -37,7 +37,7 @@ const bool _useEmulators = kDebugMode;
 /// instance - fails with "no user record" and signs the device out. Clear the
 /// app's stored session whenever the emulators are restarted:
 ///
-///   adb shell pm clear com.example.nutriscan
+///   adb shell pm clear com.azim.nutriscan
 const String _emulatorHost = '127.0.0.1';
 const int _functionsEmulatorPort = 5001;
 const int _firestoreEmulatorPort = 8080;

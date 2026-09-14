@@ -430,11 +430,13 @@ void main() {
     testWidgets('13. every day of the week shows what was eaten on it', (
       WidgetTester tester,
     ) async {
-      // Two meals today, one on the Monday of this week.
+      // Two meals today, plus one on Monday when Monday is a different day.
+      // On Mondays, seeding both would put all three meals on today.
       await pumpHistory(tester, <SavedMeal>[
         mealOn(today, id: 'a', calories: 400),
         mealOn(today, id: 'b', calories: 220),
-        mealOn(thisWeek.first, id: 'c', calories: 510),
+        if (thisWeek.first != today)
+          mealOn(thisWeek.first, id: 'c', calories: 510),
       ]);
 
       expect(figureOn(tester, today), '620');

@@ -21,7 +21,7 @@ val hasReleaseSigning = keystorePropertiesFile.exists() &&
     keystoreProperties.getProperty("storeFile") != null
 
 android {
-    namespace = "com.nutriscan.app"
+    namespace = "com.azim.nutriscan"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -32,7 +32,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.nutriscan.app"
+        applicationId = "com.azim.nutriscan"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
