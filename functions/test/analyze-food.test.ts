@@ -7,8 +7,10 @@ import {
   validateAnalyzeFoodImageRequest,
 } from "../src/ai/analyze-food.js";
 import {
+  GEMINI_MODEL,
   GeminiError,
   createGeminiClient,
+  toGeminiError,
 } from "../src/ai/gemini-client.js";
 import type {
   FoodImage,
@@ -454,5 +456,58 @@ describe("createGeminiClient", () => {
     expect(() => createGeminiClient("")).toThrowError(
       "GEMINI_API_KEY is not configured.",
     );
+  });
+
+  it("extracts useful SDK metadata and redacts secrets and image data", () => {
+    const apiKey = "AIzaThisKeyMustNeverAppearInLogs123456";
+    const privateKey = "private-key-secret";
+    const upstashToken = "upstash-token-secret";
+    const firebaseToken = `eyJ${"a".repeat(30)}.${"b".repeat(30)}.${"c".repeat(20)}`;
+    const imagePayload = "A".repeat(400);
+    const sdkError = Object.assign(
+      new Error(
+        JSON.stringify({
+          error: {
+            code: 503,
+            status: "UNAVAILABLE",
+            message:
+              `Temporary failure key=${apiKey} Bearer ${firebaseToken} ` +
+              `jwt=${firebaseToken} ${privateKey} ${upstashToken} ` +
+              `image=${imagePayload}`,
+          },
+        }),
+      ),
+      { name: "ApiError", status: 503 },
+    );
+
+    const mapped = toGeminiError(sdkError, [
+      apiKey,
+      privateKey,
+      upstashToken,
+    ]);
+    const logged = JSON.stringify(mapped.diagnostics);
+
+    expect(mapped.kind).toBe("unavailable");
+    expect(mapped.message).toBe("The model is busy.");
+    expect(mapped.diagnostics).toMatchObject({
+      httpStatus: 503,
+      upstreamCode: "UNAVAILABLE",
+      model: GEMINI_MODEL,
+      retryable: true,
+      sdkErrorName: "ApiError",
+      sdkErrorType: "Error",
+    });
+    for (const secret of [
+      apiKey,
+      privateKey,
+      upstashToken,
+      firebaseToken,
+      imagePayload,
+    ]) {
+      expect(logged).not.toContain(secret);
+    }
+    expect(logged).toContain("[REDACTED]");
+    expect(logged).toContain("[REDACTED_TOKEN]");
+    expect(logged).toContain("[REDACTED_DATA]");
   });
 });

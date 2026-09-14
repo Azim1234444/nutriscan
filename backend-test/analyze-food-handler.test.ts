@@ -10,6 +10,7 @@ import type {
   FoodImage,
   GeminiClient,
 } from "../functions/src/ai/gemini-client.js";
+import { GeminiError } from "../functions/src/ai/gemini-client.js";
 import { MAX_IMAGE_BYTES } from "../functions/src/types/nutrition.js";
 
 const imageBase64 = Buffer.from("pretend-image").toString("base64");
@@ -159,6 +160,42 @@ describe("POST /api/analyze-food", () => {
 
     expect(response.status).toBe(500);
     expect(body).not.toContain("secret internals");
+  });
+
+  it("logs safe Gemini diagnostics without changing the client response", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const gemini = new FakeGeminiClient(
+      undefined,
+      new GeminiError("unavailable", "The model is busy.", {
+        httpStatus: 503,
+        upstreamCode: "UNAVAILABLE",
+        upstreamMessage: "The service is temporarily unavailable.",
+        model: "gemini-3.5-flash",
+        retryable: true,
+        sdkErrorName: "ApiError",
+        sdkErrorType: "ApiError",
+      }),
+    );
+
+    const response = await createAnalyzeFoodHandler(dependencies({ gemini }))(post());
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "unavailable",
+        message: "The analysis service is busy. Please try again in a moment.",
+      },
+    });
+    expect(log).toHaveBeenCalledWith("Gemini food analysis request failed", {
+      kind: "unavailable",
+      httpStatus: 503,
+      upstreamCode: "UNAVAILABLE",
+      upstreamMessage: "The service is temporarily unavailable.",
+      model: "gemini-3.5-flash",
+      retryable: true,
+      sdkErrorName: "ApiError",
+      sdkErrorType: "ApiError",
+    });
   });
 
   it("rejects malformed model output", async () => {

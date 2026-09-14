@@ -184,7 +184,10 @@ export function createAnalyzeFoodHandler(
         );
       }
       if (error instanceof GeminiError) {
-        console.error("Gemini food analysis request failed", { kind: error.kind });
+        console.error("Gemini food analysis request failed", {
+          kind: error.kind,
+          ...error.diagnostics,
+        });
         if (error.kind === "unavailable") {
           return errorResponse(
             503,

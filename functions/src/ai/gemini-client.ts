@@ -21,10 +21,27 @@ export interface FoodImage {
 /** Why a Gemini call failed, so the callable can pick an error code. */
 export type GeminiFailureKind = "unavailable" | "rate_limited" | "failed";
 
+/** Safe, bounded metadata suitable for structured server logs. */
+export interface GeminiErrorDiagnostics {
+  httpStatus?: number;
+  upstreamCode?: string | number;
+  upstreamMessage?: string;
+  model: string;
+  retryable: boolean;
+  sdkErrorName: string;
+  sdkErrorType: string;
+}
+
 export class GeminiError extends Error {
   constructor(
     readonly kind: GeminiFailureKind,
     message: string,
+    readonly diagnostics: GeminiErrorDiagnostics = {
+      model: GEMINI_MODEL,
+      retryable: kind !== "failed",
+      sdkErrorName: "GeminiError",
+      sdkErrorType: "GeminiError",
+    },
   ) {
     super(message);
     this.name = "GeminiError";
@@ -127,24 +144,160 @@ const RESPONSE_SCHEMA = {
   ],
 };
 
-/** Maps an SDK error to a failure kind without leaking request details. */
-function toGeminiError(error: unknown): GeminiError {
+type UnknownRecord = Record<string, unknown>;
+
+const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 500;
+
+function asRecord(value: unknown): UnknownRecord | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as UnknownRecord)
+    : undefined;
+}
+
+function safeErrorLabel(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(value)
+    ? value
+    : fallback;
+}
+
+/** Removes credentials and payload-like blobs before any upstream text is logged. */
+function safeDiagnosticMessage(
+  value: string,
+  sensitiveValues: readonly string[],
+): string {
+  let safe = value;
+
+  for (const secret of sensitiveValues) {
+    if (secret.length >= 4) safe = safe.split(secret).join("[REDACTED]");
+  }
+
+  safe = safe
+    .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/gi, "[REDACTED_PEM]")
+    .replace(/\bBearer\s+[^\s"']+/gi, "Bearer [REDACTED]")
+    .replace(
+      /([?&](?:key|api_key|token|access_token)=)[^&\s"']+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(/\bAIza[A-Za-z0-9_-]{20,}\b/g, "[REDACTED_API_KEY]")
+    .replace(
+      /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\b/g,
+      "[REDACTED_TOKEN]",
+    )
+    .replace(/[A-Za-z0-9+/_=-]{200,}/g, "[REDACTED_DATA]")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return safe.length <= MAX_DIAGNOSTIC_MESSAGE_LENGTH
+    ? safe
+    : `${safe.slice(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH)}…`;
+}
+
+function numericStatus(record: UnknownRecord | undefined): number | undefined {
+  for (const field of ["status", "statusCode"]) {
+    const value = record?.[field];
+    if (typeof value === "number" && Number.isInteger(value)) return value;
+  }
+  return undefined;
+}
+
+function parsedUpstreamError(message: string): UnknownRecord | undefined {
+  try {
+    return asRecord(asRecord(JSON.parse(message))?.["error"]);
+  } catch {
+    return undefined;
+  }
+}
+
+function retryableFailure(
+  kind: GeminiFailureKind,
+  httpStatus: number | undefined,
+  upstreamCode: string | number | undefined,
+  sdkErrorName: string,
+): boolean {
+  if (kind === "unavailable" || kind === "rate_limited") return true;
+  if (sdkErrorName === "AbortError") return true;
+  if (
+    httpStatus !== undefined &&
+    [408, 429, 500, 502, 503, 504].includes(httpStatus)
+  ) {
+    return true;
+  }
+  return (
+    typeof upstreamCode === "string" &&
+    ["ABORTED", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED", "UNAVAILABLE"].includes(
+      upstreamCode.toUpperCase(),
+    )
+  );
+}
+
+/** Maps an SDK error to a safe user kind plus redacted diagnostic metadata. */
+export function toGeminiError(
+  error: unknown,
+  sensitiveValues: readonly string[] = [],
+): GeminiError {
   const message = error instanceof Error ? error.message : String(error);
+  const record = asRecord(error);
+  const upstream = parsedUpstreamError(message);
+  const httpStatus = numericStatus(record) ??
+    (typeof upstream?.["code"] === "number" ? upstream["code"] : undefined);
+  const rawUpstreamCode = upstream?.["status"] ?? record?.["code"];
+  const upstreamCode =
+    typeof rawUpstreamCode === "string" || typeof rawUpstreamCode === "number"
+      ? rawUpstreamCode
+      : undefined;
+  const rawUpstreamMessage =
+    typeof upstream?.["message"] === "string"
+      ? upstream["message"]
+      : message;
+  const sdkErrorName = safeErrorLabel(record?.["name"], "UnknownError");
+  const sdkErrorType = safeErrorLabel(
+    error instanceof Error ? error.constructor.name : typeof error,
+    "UnknownError",
+  );
+
+  let kind: GeminiFailureKind = "failed";
 
   if (error instanceof Error && error.name === "AbortError") {
-    return new GeminiError("unavailable", "The analysis timed out.");
+    kind = "unavailable";
+  } else if (message.includes("503") || message.includes("UNAVAILABLE")) {
+    kind = "unavailable";
+  } else if (message.includes("429") || message.includes("RESOURCE_EXHAUSTED")) {
+    kind = "rate_limited";
   }
-  if (message.includes("503") || message.includes("UNAVAILABLE")) {
-    return new GeminiError("unavailable", "The model is busy.");
-  }
-  if (message.includes("429") || message.includes("RESOURCE_EXHAUSTED")) {
-    return new GeminiError("rate_limited", "The model quota is exhausted.");
-  }
-  return new GeminiError("failed", "The model request failed.");
+
+  const userSafeMessage =
+    error instanceof Error && error.name === "AbortError"
+      ? "The analysis timed out."
+      : kind === "unavailable"
+        ? "The model is busy."
+        : kind === "rate_limited"
+          ? "The model quota is exhausted."
+          : "The model request failed.";
+
+  return new GeminiError(kind, userSafeMessage, {
+    httpStatus,
+    upstreamCode,
+    upstreamMessage: safeDiagnosticMessage(
+      rawUpstreamMessage,
+      sensitiveValues,
+    ),
+    model: GEMINI_MODEL,
+    retryable: retryableFailure(
+      kind,
+      httpStatus,
+      upstreamCode,
+      sdkErrorName,
+    ),
+    sdkErrorName,
+    sdkErrorType,
+  });
 }
 
 class GoogleGeminiClient implements GeminiClient {
-  constructor(private readonly ai: GoogleGenAI) {}
+  constructor(
+    private readonly ai: GoogleGenAI,
+    private readonly sensitiveValues: readonly string[],
+  ) {}
 
   async analyzeFoodImage(image: FoodImage): Promise<unknown> {
     let text: string | undefined;
@@ -170,7 +323,7 @@ class GoogleGeminiClient implements GeminiClient {
       });
       text = response.text;
     } catch (error) {
-      throw toGeminiError(error);
+      throw toGeminiError(error, this.sensitiveValues);
     }
 
     if (text === undefined || text.trim().length === 0) {
@@ -196,5 +349,10 @@ export function createGeminiClient(apiKey: string): GeminiClient {
   if (apiKey.trim().length === 0) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
-  return new GoogleGeminiClient(new GoogleGenAI({ apiKey }));
+  return new GoogleGeminiClient(new GoogleGenAI({ apiKey }), [
+    apiKey,
+    process.env.GEMINI_API_KEY ?? "",
+    process.env.FIREBASE_PRIVATE_KEY ?? "",
+    process.env.UPSTASH_REDIS_REST_TOKEN ?? "",
+  ]);
 }
