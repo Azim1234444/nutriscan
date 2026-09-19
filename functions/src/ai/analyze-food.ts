@@ -31,6 +31,90 @@ function reject(message: string): never {
   throw new HttpsError("invalid-argument", message);
 }
 
+function hasBytesAt(
+  bytes: Buffer,
+  offset: number,
+  expected: readonly number[],
+): boolean {
+  return expected.every((value, index) => bytes[offset + index] === value);
+}
+
+function isJpeg(bytes: Buffer): boolean {
+  if (
+    bytes.length < 4 ||
+    !hasBytesAt(bytes, 0, [0xff, 0xd8, 0xff])
+  ) {
+    return false;
+  }
+
+  // A missing end-of-image marker is a strong indication that the upload was
+  // truncated. It may be followed by metadata, so do not require it to be the
+  // final two bytes.
+  for (let index = bytes.length - 2; index >= 3; index -= 1) {
+    if (bytes[index] === 0xff && bytes[index + 1] === 0xd9) return true;
+  }
+  return false;
+}
+
+function isPng(bytes: Buffer): boolean {
+  const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+  // A PNG always starts with its signature and a 13-byte IHDR chunk. Requiring
+  // the complete first chunk avoids accepting a signature-only truncation.
+  return (
+    bytes.length >= 33 &&
+    hasBytesAt(bytes, 0, pngSignature) &&
+    bytes.readUInt32BE(8) === 13 &&
+    bytes.toString("ascii", 12, 16) === "IHDR" &&
+    bytes.readUInt32BE(16) > 0 &&
+    bytes.readUInt32BE(20) > 0
+  );
+}
+
+function isWebp(bytes: Buffer): boolean {
+  if (
+    bytes.length < 20 ||
+    bytes.toString("ascii", 0, 4) !== "RIFF" ||
+    bytes.toString("ascii", 8, 12) !== "WEBP" ||
+    bytes.readUInt32LE(4) + 8 !== bytes.length
+  ) {
+    return false;
+  }
+
+  const chunkType = bytes.toString("ascii", 12, 16);
+  const chunkSize = bytes.readUInt32LE(16);
+  const paddedChunkSize = chunkSize + (chunkSize % 2);
+  if (20 + paddedChunkSize > bytes.length) return false;
+
+  switch (chunkType) {
+    case "VP8 ":
+      return (
+        chunkSize >= 10 &&
+        hasBytesAt(bytes, 23, [0x9d, 0x01, 0x2a])
+      );
+    case "VP8L":
+      return chunkSize >= 5 && bytes[20] === 0x2f;
+    case "VP8X":
+      return chunkSize === 10;
+    default:
+      return false;
+  }
+}
+
+function imageBytesMatchMimeType(
+  bytes: Buffer,
+  mimeType: SupportedMimeType,
+): boolean {
+  switch (mimeType) {
+    case "image/jpeg":
+      return isJpeg(bytes);
+    case "image/png":
+      return isPng(bytes);
+    case "image/webp":
+      return isWebp(bytes);
+  }
+}
+
 /**
  * Checks untrusted callable input and returns it in a typed shape.
  *
@@ -77,6 +161,11 @@ export function validateAnalyzeFoodImageRequest(
     reject(
       "imageBase64 must be base64 encoded image bytes without a data URL prefix.",
     );
+  }
+
+  const imageBytes = Buffer.from(imageBase64, "base64");
+  if (imageBytes.length === 0 || !imageBytesMatchMimeType(imageBytes, mimeType)) {
+    reject("Image bytes do not match the declared mimeType or are invalid.");
   }
 
   return { imageBase64, mimeType };

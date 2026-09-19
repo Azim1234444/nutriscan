@@ -1,5 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { defineSecret } from "firebase-functions/params";
+import {
+  MAX_ASSUMPTION_LENGTH,
+  MAX_ASSUMPTIONS,
+  MAX_NUTRITION_ITEM_NAME_LENGTH,
+  MAX_NUTRITION_ITEMS,
+} from "../types/nutrition";
 
 /**
  * Handle to the Gemini API key stored in Google Secret Manager.
@@ -64,9 +70,10 @@ Rules:
 - If food is present, set food_detected to true and estimate the nutrition of
   the whole visible portion, not per 100 g.
 - Base estimates on the visible portion size, plate size and preparation style.
-- List every distinct component you can identify in items.
+- List at most five distinct components you can identify in items.
 - Put anything you had to assume (portion weight, hidden ingredients, cooking
-  oil, sauces) into assumptions, as short plain sentences.
+  oil, sauces) into at most three assumptions, as short plain sentences.
+- Return at most six entries across assumptions and items combined.
 - confidence is your own certainty from 0 to 1. Use a low value when the photo
   is blurry, partially hidden, or the portion is hard to judge.
 - Estimate honestly. Do not round numbers to look tidy.
@@ -108,14 +115,22 @@ const RESPONSE_SCHEMA = {
     },
     assumptions: {
       type: Type.ARRAY,
-      items: { type: Type.STRING },
+      maxItems: String(MAX_ASSUMPTIONS),
+      items: {
+        type: Type.STRING,
+        maxLength: String(MAX_ASSUMPTION_LENGTH),
+      },
     },
     items: {
       type: Type.ARRAY,
+      maxItems: String(MAX_NUTRITION_ITEMS),
       items: {
         type: Type.OBJECT,
         properties: {
-          name: { type: Type.STRING },
+          name: {
+            type: Type.STRING,
+            maxLength: String(MAX_NUTRITION_ITEM_NAME_LENGTH),
+          },
           estimated_portion_grams: { type: Type.NUMBER },
         },
         required: ["name", "estimated_portion_grams"],

@@ -5,8 +5,7 @@ import 'dart:convert';
 /// [profileName] and [foodName] are not chosen here. They are the caps the
 /// Firestore security rules already hold, written down once so the forms, the
 /// model parser and the rules cannot drift apart - the same reason the age and
-/// weight bounds are mirrored in the profile model. [description] has no rule
-/// behind it and is the app's own bound; see its note.
+/// weight bounds are mirrored in the profile model.
 ///
 /// Lengths are counted in UTF-8 bytes. The rules measure with `size()`, and a
 /// UTF-8 length is never smaller than either a character count or a UTF-16
@@ -20,19 +19,16 @@ class TextLimits {
   /// Mirrors `isValidProfile` in firestore.rules: `name.size() <= 100`.
   static const int profileName = 100;
 
-  /// Mirrors `isNutrition` in firestore.rules: `foodName.size() <= 200`.
+  /// Mirrors the nutrition-map rules: `foodName.size() <= 200`.
   ///
   /// One cap covers every copy of the name: a meal document stores it at the
   /// top level and again inside both nutrition blocks, all from the same
   /// string, and the nested ones are what the rules measure.
   static const int foodName = 200;
 
-  /// The app's own bound - no security rule constrains a description.
-  ///
+  /// Mirrors the nutrition-map rules: `description.size() <= 1000`.
   /// A description is a sentence or two about a plate of food, so this is
-  /// several times what one needs and nowhere near anything Firestore would
-  /// object to. It is here so a stored description cannot grow without limit,
-  /// not to shape what somebody may write.
+  /// deliberately generous while still preventing unbounded stored text.
   static const int description = 1000;
 
   /// Whether [value] is short enough to store, measured as described above.

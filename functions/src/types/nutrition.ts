@@ -24,6 +24,13 @@ export type SupportedMimeType = (typeof SUPPORTED_MIME_TYPES)[number];
  */
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
+/** Firestore-validated limits for the model's supporting metadata. */
+export const MAX_ASSUMPTIONS = 3;
+export const MAX_NUTRITION_ITEMS = 5;
+export const MAX_AI_METADATA_ENTRIES = 6;
+export const MAX_ASSUMPTION_LENGTH = 500;
+export const MAX_NUTRITION_ITEM_NAME_LENGTH = 200;
+
 /** What the Flutter client sends to `analyzeFoodImage`. */
 export interface AnalyzeFoodImageRequest {
   /** Raw base64 of the image bytes - no `data:` URL prefix. */

@@ -1,5 +1,10 @@
 import {
   AnalyzeFoodImageResponse,
+  MAX_AI_METADATA_ENTRIES,
+  MAX_ASSUMPTION_LENGTH,
+  MAX_ASSUMPTIONS,
+  MAX_NUTRITION_ITEM_NAME_LENGTH,
+  MAX_NUTRITION_ITEMS,
   NutritionAnalysis,
   NutritionItem,
 } from "../types/nutrition";
@@ -40,20 +45,35 @@ function readAmount(source: Record<string, unknown>, field: string): number {
 function readStringArray(
   source: Record<string, unknown>,
   field: string,
+  maxEntries: number,
+  maxEntryLength: number,
 ): string[] {
   const value = source[field];
   if (!Array.isArray(value)) fail(field, "must be an array");
+  if (value.length > maxEntries) {
+    fail(field, `must contain at most ${maxEntries} entries`);
+  }
   return value.map((entry, index) => {
     if (typeof entry !== "string") {
       fail(`${field}[${index}]`, "must be a string");
     }
-    return entry.trim();
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) {
+      fail(`${field}[${index}]`, "must not be empty");
+    }
+    if (trimmed.length > maxEntryLength) {
+      fail(`${field}[${index}]`, `must be at most ${maxEntryLength} characters`);
+    }
+    return trimmed;
   });
 }
 
 function readItems(source: Record<string, unknown>): NutritionItem[] {
   const value = source["items"];
   if (!Array.isArray(value)) fail("items", "must be an array");
+  if (value.length > MAX_NUTRITION_ITEMS) {
+    fail("items", `must contain at most ${MAX_NUTRITION_ITEMS} entries`);
+  }
 
   return value.map((entry, index) => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
@@ -62,6 +82,12 @@ function readItems(source: Record<string, unknown>): NutritionItem[] {
     const item = entry as Record<string, unknown>;
     const name = readString(item, "name");
     if (name.length === 0) fail(`items[${index}].name`, "must not be empty");
+    if (name.length > MAX_NUTRITION_ITEM_NAME_LENGTH) {
+      fail(
+        `items[${index}].name`,
+        `must be at most ${MAX_NUTRITION_ITEM_NAME_LENGTH} characters`,
+      );
+    }
 
     return {
       name,
@@ -107,6 +133,20 @@ export function parseAnalysisResponse(raw: unknown): AnalyzeFoodImageResponse {
   const foodName = readString(source, "food_name");
   if (foodName.length === 0) fail("food_name", "must not be empty");
 
+  const assumptions = readStringArray(
+    source,
+    "assumptions",
+    MAX_ASSUMPTIONS,
+    MAX_ASSUMPTION_LENGTH,
+  );
+  const items = readItems(source);
+  if (assumptions.length + items.length > MAX_AI_METADATA_ENTRIES) {
+    fail(
+      "assumptions and items",
+      `must contain at most ${MAX_AI_METADATA_ENTRIES} combined entries`,
+    );
+  }
+
   const analysis: NutritionAnalysis = {
     food_name: foodName,
     description: readString(source, "description"),
@@ -117,8 +157,8 @@ export function parseAnalysisResponse(raw: unknown): AnalyzeFoodImageResponse {
     fat_grams: readAmount(source, "fat_grams"),
     fiber_grams: readAmount(source, "fiber_grams"),
     confidence,
-    assumptions: readStringArray(source, "assumptions"),
-    items: readItems(source),
+    assumptions,
+    items,
   };
 
   return { status: "ok", analysis };

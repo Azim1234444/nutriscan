@@ -1,79 +1,194 @@
 rules_version = '2';
 
-// NutriScan meal storage.
+// NutriScan user data storage.
 //
-// Every document lives under the user that owns it, and the only way in is as
-// that signed-in user. There is no public read or write anywhere in this file.
+// Every document lives below its authenticated owner. Writes are restricted
+// to the exact shapes produced by the Flutter serializers; unknown fields and
+// malformed nested values are rejected before they can become stored data.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // True when the caller is signed in as the user who owns this path.
     function isOwner(userId) {
       return request.auth != null && request.auth.uid == userId;
     }
 
-    // A number that is present, finite and not negative.
-    function isAmount(value) {
-      return value is number && value >= 0;
+    function isBoundedString(value, minLength, maxLength) {
+      return value is string
+        && value.size() >= minLength
+        && value.size() <= maxLength;
     }
 
-    // Checks the nutrition block a client is allowed to write.
-    function isNutrition(data) {
-      return data.foodName is string
-        && data.foodName.size() > 0
-        && data.foodName.size() <= 200
-        && isAmount(data.estimatedPortionGrams)
-        && isAmount(data.calories)
-        && isAmount(data.proteinGrams)
-        && isAmount(data.carbohydratesGrams)
-        && isAmount(data.fatGrams)
-        && isAmount(data.fiberGrams);
+    function isNumberBetween(value, minimum, maximum) {
+      return value is number && value >= minimum && value <= maximum;
+    }
+
+    function hasNutritionValues(data) {
+      return isBoundedString(data.foodName, 1, 200)
+        && isBoundedString(data.description, 0, 1000)
+        && isNumberBetween(data.estimatedPortionGrams, 0, 10000)
+        && isNumberBetween(data.calories, 0, 20000)
+        && isNumberBetween(data.proteinGrams, 0, 2000)
+        && isNumberBetween(data.carbohydratesGrams, 0, 5000)
+        && isNumberBetween(data.fatGrams, 0, 2000)
+        && isNumberBetween(data.fiberGrams, 0, 1000);
+    }
+
+    function isCurrentNutrition(data) {
+      return data is map
+        && data.keys().hasOnly([
+          'foodName',
+          'description',
+          'estimatedPortionGrams',
+          'calories',
+          'proteinGrams',
+          'carbohydratesGrams',
+          'fatGrams',
+          'fiberGrams'
+        ])
+        && hasNutritionValues(data);
+    }
+
+    function isValidAssumptionAt(values, index) {
+      return values.size() <= index
+        || isBoundedString(values[index], 1, 500);
+    }
+
+    function isValidAssumptions(values) {
+      return values is list
+        && values.size() <= 3
+        && isValidAssumptionAt(values, 0)
+        && isValidAssumptionAt(values, 1)
+        && isValidAssumptionAt(values, 2);
+    }
+
+    function isValidItemAt(values, index) {
+      return values.size() <= index
+        || (values[index].keys().hasOnly(['name', 'estimatedPortionGrams'])
+          && isBoundedString(values[index].name, 1, 200)
+          && isNumberBetween(
+            values[index].estimatedPortionGrams,
+            0,
+            10000
+          ));
+    }
+
+    function isValidItems(values) {
+      return values is list
+        && values.size() <= 5
+        && isValidItemAt(values, 0)
+        && isValidItemAt(values, 1)
+        && isValidItemAt(values, 2)
+        && isValidItemAt(values, 3)
+        && isValidItemAt(values, 4);
+    }
+
+    function isAiNutrition(data) {
+      return data is map
+        && data.keys().hasOnly([
+          'foodName',
+          'description',
+          'estimatedPortionGrams',
+          'calories',
+          'proteinGrams',
+          'carbohydratesGrams',
+          'fatGrams',
+          'fiberGrams',
+          'confidence',
+          'assumptions',
+          'items'
+        ])
+        && hasNutritionValues(data)
+        && isNumberBetween(data.confidence, 0, 1)
+        && data.assumptions is list
+        && data.items is list
+        && data.assumptions.size() + data.items.size() <= 6
+        && isValidAssumptions(data.assumptions)
+        && isValidItems(data.items);
+    }
+
+    function isMealInternallyConsistent(data) {
+      return data.foodName == data.current.foodName
+        && data.description == data.current.description
+        && data.estimatedPortionGrams == data.current.estimatedPortionGrams;
     }
 
     function isValidMeal(userId, data) {
-      return data.userId == userId
-        && data.foodName is string
-        && data.foodName.size() > 0
+      return data.keys().hasOnly([
+          'userId',
+          'foodName',
+          'description',
+          'mealType',
+          'estimatedPortionGrams',
+          'aiEstimate',
+          'current',
+          'isEdited',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.userId == userId
+        && data.mealType in ['breakfast', 'lunch', 'dinner', 'snack']
         && data.isEdited is bool
-        && data.current is map
-        && isNutrition(data.current)
-        && data.aiEstimate is map
-        && isNutrition(data.aiEstimate)
-        // Images are never stored in a document.
-        && !('imageBase64' in data)
-        && !('image' in data);
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && isAiNutrition(data.aiEstimate)
+        && isCurrentNutrition(data.current)
+        && isMealInternallyConsistent(data);
     }
 
-    // Checks the profile a client is allowed to write.
     function isValidProfile(userId, data) {
-      return data.uid == userId
-        && data.name is string
-        && data.name.size() > 0
-        && data.name.size() <= 100
-        && data.age is number && data.age >= 10 && data.age <= 100
-        && data.heightCm is number && data.heightCm >= 100 && data.heightCm <= 250
-        && data.weightKg is number && data.weightKg >= 30 && data.weightKg <= 300
-        && data.gender is string
-        && data.activityLevel is string
-        && data.goal is string
-        && isAmount(data.dailyCalories)
-        && isAmount(data.proteinGrams)
-        && isAmount(data.carbohydratesGrams)
-        && isAmount(data.fatGrams);
+      return data.keys().hasOnly([
+          'uid',
+          'name',
+          'age',
+          'gender',
+          'heightCm',
+          'weightKg',
+          'activityLevel',
+          'goal',
+          'dailyCalories',
+          'proteinGrams',
+          'carbohydratesGrams',
+          'fatGrams',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid == userId
+        && isBoundedString(data.name, 1, 100)
+        && data.age is int && data.age >= 10 && data.age <= 100
+        && isNumberBetween(data.heightCm, 100, 250)
+        && isNumberBetween(data.weightKg, 30, 300)
+        && data.gender in ['male', 'female', 'other']
+        && data.activityLevel in [
+          'sedentary',
+          'light',
+          'moderate',
+          'active',
+          'athlete'
+        ]
+        && data.goal in ['lose', 'maintain', 'gain']
+        && isNumberBetween(data.dailyCalories, 0, 10000)
+        && isNumberBetween(data.proteinGrams, 0, 600)
+        && isNumberBetween(data.carbohydratesGrams, 0, 2000)
+        && isNumberBetween(data.fatGrams, 0, 500)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
     }
 
     match /users/{userId} {
-      // The user document itself is not used yet.
+      // NutriScan has no document at users/{uid}.
       allow read, write: if false;
 
-      // The nutrition profile. Firestore paths alternate collection and
-      // document, so the profile lives in a 'profile' collection holding one
-      // document per user.
-      match /profile/{profileId} {
+      // There is exactly one profile document per user. No other id below
+      // the profile collection is readable or writable.
+      match /profile/current {
         allow read, delete: if isOwner(userId);
 
-        allow create, update: if isOwner(userId)
+        allow create: if isOwner(userId)
           && isValidProfile(userId, request.resource.data);
+
+        allow update: if isOwner(userId)
+          && isValidProfile(userId, request.resource.data)
+          && request.resource.data.createdAt == resource.data.createdAt;
       }
 
       match /meals/{mealId} {
@@ -82,11 +197,9 @@ service cloud.firestore {
         allow create: if isOwner(userId)
           && isValidMeal(userId, request.resource.data);
 
-        // An edit may change only what the person typed. The model's estimate
-        // and the moment the meal was logged are not theirs to rewrite, so
-        // both have to come back exactly as they went in. The app already
-        // leaves them out of an edit, which a merge keeps untouched; this is
-        // the same promise made where it cannot be worked around.
+        // Retrying a preallocated id is an update. It may refresh reviewed
+        // values and updatedAt, but cannot rewrite the original AI result or
+        // move the meal to a different point in history.
         allow update: if isOwner(userId)
           && isValidMeal(userId, request.resource.data)
           && request.resource.data.aiEstimate == resource.data.aiEstimate
@@ -94,7 +207,6 @@ service cloud.firestore {
       }
     }
 
-    // Anything not matched above is denied.
     match /{document=**} {
       allow read, write: if false;
     }

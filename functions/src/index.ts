@@ -5,26 +5,24 @@ import { handleAnalyzeFoodImage } from "./ai/analyze-food";
 import { createGeminiClient, geminiApiKey } from "./ai/gemini-client";
 import { AnalyzeFoodImageResponse } from "./types/nutrition";
 
-// 2nd generation defaults for every function in this codebase.
-setGlobalOptions({ region: "us-central1", maxInstances: 10 });
+// 2nd generation defaults shared by every function in this codebase.
+setGlobalOptions({ region: "us-central1" });
 
 /** True while running under the Functions emulator. */
 const runningInEmulator = process.env.FUNCTIONS_EMULATOR === "true";
 
 /**
- * Whether callers must present a valid App Check token.
+ * Source-controlled production rollout switch for App Check enforcement.
  *
- * App Check is wired up but not switched on yet: the Android provider still
- * has to be registered in the Firebase console, and turning this on before
- * that would lock the real app out. Enable it for a deployment with:
- *
- *   firebase deploy --only functions --set-env-vars APP_CHECK_ENFORCED=true
- *
- * The emulator never enforces, so local development keeps working either way.
- * Authentication is enforced regardless of this setting.
+ * Keep this false while validating Play Integrity traffic in App Check metrics.
+ * To enable enforcement later, first confirm that internal/closed Play builds
+ * produce valid tokens, then intentionally change this to true and redeploy
+ * only analyzeFoodImage. Recheck metrics and callable failures after rollout.
+ * The emulator remains unenforced regardless of this switch. Authentication is
+ * enforced independently in the request handler.
  */
-const enforceAppCheck =
-  process.env.APP_CHECK_ENFORCED === "true" && !runningInEmulator;
+const enforceAppCheckInProduction = false;
+const enforceAppCheck = enforceAppCheckInProduction && !runningInEmulator;
 
 /**
  * Callable entry point for food photo analysis.
@@ -45,6 +43,9 @@ export const analyzeFoodImage = onCall(
     secrets: [geminiApiKey],
     memory: "512MiB",
     timeoutSeconds: 60,
+    // Bound model traffic to six simultaneous calls (2 requests x 3 instances).
+    concurrency: 2,
+    maxInstances: 3,
     enforceAppCheck,
   },
   (request: CallableRequest<unknown>): Promise<AnalyzeFoodImageResponse> =>

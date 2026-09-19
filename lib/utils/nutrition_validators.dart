@@ -30,9 +30,8 @@ class NutritionValidators {
 
   /// A description is optional, so only its length is checked.
   ///
-  /// Nothing in the security rules bounds this field, which is exactly why it
-  /// is bounded here: without it, a description is the one stored string that
-  /// could grow without limit.
+  /// The same limit is enforced by Firestore, so an ordinary client can show
+  /// a useful form error before a write reaches the security boundary.
   static String? description(String? value) {
     final String text = value?.trim() ?? '';
     if (text.isEmpty) return null;

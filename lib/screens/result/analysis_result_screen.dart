@@ -52,11 +52,13 @@ class _AnalysisResultScreenState extends State<AnalysisResultScreen> {
   /// Why the last save attempt failed, if it did.
   String? _saveError;
 
-  /// The document this meal was written to.
+  /// The document allocated for this meal-save flow.
   ///
-  /// Kept so a retry overwrites that document rather than creating a second
-  /// one, and so tapping Save twice can never duplicate the meal.
-  String? _savedMealId;
+  /// Set before the first write starts and kept for every retry and edit.
+  String? _mealId;
+
+  /// The stable history time written with [_mealId] on every attempt.
+  DateTime? _mealCreatedAt;
 
   /// Opens the edit form and keeps whatever comes back.
   Future<void> _editNutrition() async {
@@ -82,14 +84,19 @@ class _AnalysisResultScreenState extends State<AnalysisResultScreen> {
   ///
   /// The meal is staged in app state first and only cleared once the write
   /// succeeds, so a failure leaves it available to retry. The document id is
-  /// remembered, so retrying overwrites the same document instead of adding a
-  /// second copy.
+  /// allocated before the write, so even a lost acknowledgement can only be
+  /// retried against the same document.
   Future<void> _saveMeal() async {
     if (_isSaving || _isSaved) return;
 
     final AppState state = AppScope.of(context);
     final MealRepository repository = ServicesScope.of(context).mealRepository;
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
+    // Both values become part of this screen's save identity before Firestore
+    // is called. Editing or retrying never replaces either one.
+    final String mealId = _mealId ??= repository.allocateMealId();
+    final DateTime mealCreatedAt = _mealCreatedAt ??= DateTime.now();
 
     state.setPendingMeal(_meal);
     setState(() {
@@ -98,7 +105,11 @@ class _AnalysisResultScreenState extends State<AnalysisResultScreen> {
     });
 
     try {
-      _savedMealId = await repository.saveMeal(_meal, mealId: _savedMealId);
+      await repository.saveMeal(
+        _meal,
+        mealId: mealId,
+        createdAt: mealCreatedAt,
+      );
 
       if (!mounted) return;
       state.clearPendingMeal();

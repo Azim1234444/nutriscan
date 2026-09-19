@@ -164,6 +164,31 @@ void main() {
     expect(await documentsFor('user-a'), hasLength(1));
   });
 
+  test('a preallocated id is an idempotent new-meal write', () async {
+    final ReviewedMeal meal = ReviewedMeal.fromAnalysis(buildAnalysis());
+    final String id = repository.allocateMealId();
+    final DateTime createdAt = DateTime.utc(2026, 9, 15, 12, 30);
+
+    await repository.saveMeal(meal, mealId: id, createdAt: createdAt);
+    await repository.saveMeal(
+      meal.withEdits(meal.current.copyWith(calories: 620)),
+      mealId: id,
+      createdAt: createdAt,
+    );
+
+    final List<Map<String, dynamic>> docs = await documentsFor('user-a');
+    expect(docs, hasLength(1));
+    final Map<String, dynamic> current = Map<String, dynamic>.from(
+      docs.single[MealFields.current] as Map,
+    );
+    expect(current[MealFields.calories], 620);
+    expect(docs.single[MealFields.createdAt], Timestamp.fromDate(createdAt));
+  });
+
+  test('separate new-meal allocations produce different ids', () {
+    expect(repository.allocateMealId(), isNot(repository.allocateMealId()));
+  });
+
   // The security rules hold `createdAt` immutable once a document exists, so
   // a re-save that restamped it would be refused outright. It must also stay
   // put for its own sake: correcting an estimate is not a reason for a meal to

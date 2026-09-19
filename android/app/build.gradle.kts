@@ -12,13 +12,65 @@ plugins {
 // Upload/release signing credentials live in android/key.properties, which is
 // gitignored along with the keystore it points at. Neither is ever committed.
 val keystorePropertiesFile = rootProject.file("key.properties")
-val keystoreProperties = Properties().apply {
-    if (keystorePropertiesFile.exists()) {
-        keystorePropertiesFile.inputStream().use { load(it) }
+val keystoreProperties = Properties()
+var keystorePropertiesReadable = true
+if (keystorePropertiesFile.exists()) {
+    try {
+        keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+    } catch (_: Exception) {
+        keystorePropertiesReadable = false
     }
 }
-val hasReleaseSigning = keystorePropertiesFile.exists() &&
-    keystoreProperties.getProperty("storeFile") != null
+
+val requiredReleaseSigningProperties = listOf(
+    "storeFile",
+    "storePassword",
+    "keyAlias",
+    "keyPassword",
+)
+val missingReleaseSigningProperties = requiredReleaseSigningProperties.filter { name ->
+    keystoreProperties.getProperty(name)?.trim().isNullOrEmpty()
+}
+val releaseKeystoreFile = keystoreProperties
+    .getProperty("storeFile")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?.let { file(it) }
+
+val releaseSigningProblem = when {
+    !keystorePropertiesFile.exists() ->
+        "android/key.properties is missing."
+    !keystorePropertiesReadable ->
+        "android/key.properties could not be read."
+    missingReleaseSigningProperties.isNotEmpty() ->
+        "android/key.properties is missing required properties: " +
+            missingReleaseSigningProperties.joinToString(", ") + "."
+    releaseKeystoreFile?.isFile != true ->
+        "The keystore file referenced by storeFile in android/key.properties does not exist."
+    else -> null
+}
+
+val releaseArtifactTaskNames = setOf(
+    "assembleRelease",
+    "bundleRelease",
+    "packageRelease",
+    "signReleaseBundle",
+)
+
+// Validate only task graphs that produce a release artifact. Debug builds do
+// not need access to upload credentials, while every release APK/AAB must stop
+// before execution if the upload signing configuration is unavailable.
+gradle.taskGraph.whenReady {
+    val buildsReleaseArtifact = allTasks.any { task ->
+        task.project == project && task.name in releaseArtifactTaskNames
+    }
+    if (buildsReleaseArtifact && releaseSigningProblem != null) {
+        throw GradleException(
+            "Release build stopped: $releaseSigningProblem " +
+                "No release APK/AAB was produced, and debug signing was not used."
+        )
+    }
+}
 
 android {
     namespace = "com.azim.nutriscan"
@@ -47,9 +99,9 @@ android {
 
     signingConfigs {
         create("release") {
-            if (hasReleaseSigning) {
+            if (releaseSigningProblem == null) {
                 // storeFile is resolved relative to this module (android/app).
-                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storeFile = releaseKeystoreFile
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
@@ -59,17 +111,8 @@ android {
 
     buildTypes {
         release {
-            if (hasReleaseSigning) {
+            if (releaseSigningProblem == null) {
                 signingConfig = signingConfigs.getByName("release")
-            } else {
-                // No key.properties on this machine (fresh clone, or CI without secrets).
-                // Fall back to the debug key so `flutter run --release` still works, but
-                // make it loud so a debug-signed build is never mistaken for shippable.
-                logger.warn(
-                    "WARNING: android/key.properties not found - the release build is being " +
-                        "signed with the DEBUG key and is NOT uploadable to Google Play."
-                )
-                signingConfig = signingConfigs.getByName("debug")
             }
         }
     }

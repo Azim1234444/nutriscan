@@ -60,7 +60,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Drops everything held for the account that is signing out.
+  /// Drops everything held for the account that is changing.
   ///
   /// Every field here belongs to one account, so all of it has to go at once:
   /// the next person to sign in must never see a trace of the last one. One
@@ -68,10 +68,13 @@ class AppState extends ChangeNotifier {
   /// state where the profile has gone but the meal under review has not.
   ///
   /// Nothing stored is deleted - this only forgets what was in memory.
-  void clearForSignOut() {
+  void clearForAccountChange() {
     if (_profile == null && _pendingMeal == null) return;
     _profile = null;
     _pendingMeal = null;
     notifyListeners();
   }
+
+  /// Drops account-scoped state before ending the current session.
+  void clearForSignOut() => clearForAccountChange();
 }

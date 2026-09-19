@@ -90,6 +90,7 @@ void main() {
             theme: AppTheme.light,
             onGenerateRoute: AppRoutes.onGenerateRoute,
             home: AnalysisResultScreen(
+              key: UniqueKey(),
               args: AnalysisResultArgs(image: mealPhoto, result: _aiResult),
             ),
           ),
@@ -283,11 +284,112 @@ void main() {
 
     expect(find.text('Meal saved'), findsWidgets);
     expect(mealRepository.saveCalls, 1);
+    expect(mealRepository.allocatedMealIds, hasLength(1));
+    expect(mealRepository.submittedMealIds, <String?>[
+      mealRepository.allocatedMealIds.single,
+    ]);
     expect(mealRepository.meals, hasLength(1));
     expect(mealRepository.meals.single.current.calories, 580);
 
     // The staging area is cleared only after the write succeeds.
     expect(appState.pendingMeal, isNull);
+  });
+
+  testWidgets('an ambiguous commit retries the same document id', (
+    WidgetTester tester,
+  ) async {
+    final FakeMealRepository repository = FakeMealRepository()
+      ..saveFailureAfterCommit = const MealRepositoryFailure(
+        'The save result could not be confirmed. Please try again.',
+      );
+    await pumpResultScreen(tester, repository: repository);
+
+    await tapButton(tester, 'Save Meal');
+
+    expect(find.text('Meal not saved'), findsOneWidget);
+    expect(repository.meals, hasLength(1));
+    final String allocatedId = repository.allocatedMealIds.single;
+    expect(repository.meals.single.id, allocatedId);
+
+    repository.saveFailureAfterCommit = null;
+    await tapButton(tester, 'Try Again');
+
+    expect(repository.allocatedMealIds, <String>[allocatedId]);
+    expect(repository.submittedMealIds, <String?>[allocatedId, allocatedId]);
+    expect(repository.meals, hasLength(1));
+    expect(repository.meals.single.id, allocatedId);
+  });
+
+  testWidgets('repeated retries never allocate additional ids', (
+    WidgetTester tester,
+  ) async {
+    final FakeMealRepository repository = FakeMealRepository()
+      ..saveFailureAfterCommit = const MealRepositoryFailure(
+        'The save result could not be confirmed. Please try again.',
+      );
+    await pumpResultScreen(tester, repository: repository);
+
+    await tapButton(tester, 'Save Meal');
+    await tapButton(tester, 'Try Again');
+
+    final String allocatedId = repository.allocatedMealIds.single;
+    expect(repository.submittedMealIds, <String?>[allocatedId, allocatedId]);
+    expect(repository.meals, hasLength(1));
+
+    repository.saveFailureAfterCommit = null;
+    await tapButton(tester, 'Try Again');
+
+    expect(repository.allocatedMealIds, <String>[allocatedId]);
+    expect(repository.submittedMealIds, <String?>[
+      allocatedId,
+      allocatedId,
+      allocatedId,
+    ]);
+    expect(repository.meals, hasLength(1));
+  });
+
+  testWidgets('editing before an ambiguous retry keeps the same id', (
+    WidgetTester tester,
+  ) async {
+    final FakeMealRepository repository = FakeMealRepository()
+      ..saveFailureAfterCommit = const MealRepositoryFailure(
+        'The save result could not be confirmed. Please try again.',
+      );
+    await pumpResultScreen(tester, repository: repository);
+
+    await tapButton(tester, 'Save Meal');
+    final String allocatedId = repository.allocatedMealIds.single;
+    await openEditor(tester);
+    await tester.enterText(
+      find.byType(TextFormField).at(_caloriesField),
+      '620',
+    );
+    await tapButton(tester, 'Save Changes');
+
+    repository.saveFailureAfterCommit = null;
+    await tapButton(tester, 'Save Meal');
+
+    expect(repository.allocatedMealIds, <String>[allocatedId]);
+    expect(repository.submittedMealIds, <String?>[allocatedId, allocatedId]);
+    expect(repository.meals, hasLength(1));
+    expect(repository.meals.single.id, allocatedId);
+    expect(repository.meals.single.current.calories, 620);
+  });
+
+  testWidgets('a genuinely new result flow allocates a different id', (
+    WidgetTester tester,
+  ) async {
+    final FakeMealRepository repository = FakeMealRepository();
+    await pumpResultScreen(tester, repository: repository);
+    await tapButton(tester, 'Save Meal');
+    final String firstId = repository.allocatedMealIds.single;
+
+    await pumpResultScreen(tester, repository: repository);
+    await tapButton(tester, 'Save Meal');
+
+    expect(repository.allocatedMealIds, hasLength(2));
+    expect(repository.allocatedMealIds.last, isNot(firstId));
+    expect(repository.meals, hasLength(2));
   });
 
   testWidgets('a failed save keeps the meal so it can be retried', (

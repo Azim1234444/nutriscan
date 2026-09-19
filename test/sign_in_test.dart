@@ -4,6 +4,8 @@
 // point is that recovering an account reaches the data already stored under
 // its id, the real Firestore repositories run against an in-memory database.
 
+import 'dart:async';
+
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,9 +14,11 @@ import 'package:nutriscan/app/app_scope.dart';
 import 'package:nutriscan/app/nutriscan_app.dart';
 import 'package:nutriscan/app/services_scope.dart';
 import 'package:nutriscan/models/saved_meal.dart';
+import 'package:nutriscan/models/reviewed_meal.dart';
 import 'package:nutriscan/models/user_profile.dart';
 import 'package:nutriscan/screens/auth/reset_password_screen.dart';
 import 'package:nutriscan/screens/auth/sign_in_screen.dart';
+import 'package:nutriscan/screens/auth/account_profile_loading_screen.dart';
 import 'package:nutriscan/screens/home/home_dashboard_screen.dart';
 import 'package:nutriscan/screens/onboarding/onboarding_screen.dart';
 import 'package:nutriscan/screens/profile/profile_screen.dart';
@@ -247,6 +251,133 @@ void main() {
       // The previous session's details must not follow the user across.
       expect(appState.profile, isNull);
       expect(find.byType(HomeDashboardScreen), findsNothing);
+    });
+
+    testWidgets('profile success installs only the recovered account state', (
+      WidgetTester tester,
+    ) async {
+      final UserProfile recovered = buildProfile(name: 'Recovered User');
+      profiles.storedProfile = recovered;
+      appState.saveProfile(buildProfile(name: 'Previous User'));
+
+      await pumpSignIn(tester);
+      await fill(tester, email: _existingEmail, password: _password);
+      await submit(tester);
+
+      expect(appState.profile, same(recovered));
+      expect(find.byType(HomeDashboardScreen), findsOneWidget);
+      expect(find.byType(AccountProfileLoadingScreen), findsNothing);
+    });
+
+    testWidgets('profile failure stays in a new-account-only error state', (
+      WidgetTester tester,
+    ) async {
+      profiles.failure = const ProfileRepositoryFailure(
+        'Your profile could not be loaded. Please try again.',
+      );
+      appState.saveProfile(buildProfile(name: 'Previous User'));
+      appState.setPendingMeal(ReviewedMeal.fromAnalysis(buildAnalysis()));
+
+      await pumpSignIn(tester);
+      await fill(tester, email: _existingEmail, password: _password);
+      await submit(tester);
+
+      expect(auth.currentUserId, _existingUserId);
+      expect(appState.profile, isNull);
+      expect(appState.pendingMeal, isNull);
+      expect(find.byType(SignInScreen), findsNothing);
+      expect(find.byType(AccountProfileLoadingScreen), findsOneWidget);
+      expect(find.text('Could not load your account'), findsOneWidget);
+    });
+
+    testWidgets('previous state clears before the new profile read completes', (
+      WidgetTester tester,
+    ) async {
+      final Completer<void> profileGate = Completer<void>();
+      profiles.loadGate = profileGate;
+      appState.saveProfile(buildProfile(name: 'Previous User'));
+      appState.setPendingMeal(ReviewedMeal.fromAnalysis(buildAnalysis()));
+
+      await pumpSignIn(tester);
+      await fill(tester, email: _existingEmail, password: _password);
+      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(auth.currentUserId, _existingUserId);
+      expect(profiles.loadCalls, 1);
+      expect(appState.profile, isNull);
+      expect(appState.pendingMeal, isNull);
+      expect(find.text('Loading your account'), findsOneWidget);
+
+      profileGate.complete();
+      await tester.pumpAndSettle();
+      expect(appState.profile?.name, 'Alex Carter');
+    });
+
+    testWidgets('back cannot reveal the previous account route', (
+      WidgetTester tester,
+    ) async {
+      profiles.failure = const ProfileRepositoryFailure(
+        'Your profile could not be loaded. Please try again.',
+      );
+      appState.saveProfile(buildProfile(name: 'Previous User'));
+
+      await tester.binding.setSurfaceSize(const Size(500, 2000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        wrap(
+          Builder(
+            builder: (BuildContext context) => Scaffold(
+              body: Column(
+                children: <Widget>[
+                  const Text('Previous account content'),
+                  FilledButton(
+                    onPressed: () =>
+                        Navigator.of(context).pushNamed(AppRoutes.signIn),
+                    child: const Text('Switch account'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Switch account'));
+      await tester.pumpAndSettle();
+      await fill(tester, email: _existingEmail, password: _password);
+      await submit(tester);
+
+      expect(find.text('Previous account content'), findsNothing);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Previous account content'), findsNothing);
+      expect(find.byType(AccountProfileLoadingScreen), findsOneWidget);
+    });
+
+    testWidgets('retry loads the profile for the newly signed-in user', (
+      WidgetTester tester,
+    ) async {
+      profiles.failure = const ProfileRepositoryFailure(
+        'Your profile could not be loaded. Please try again.',
+      );
+
+      await pumpSignIn(tester);
+      await fill(tester, email: _existingEmail, password: _password);
+      await submit(tester);
+
+      expect(auth.signedInEmails, <String>[_existingEmail]);
+      expect(profiles.loadCalls, 1);
+
+      profiles.failure = null;
+      await tester.tap(find.widgetWithText(FilledButton, 'Try again'));
+      await tester.pumpAndSettle();
+
+      expect(auth.signedInEmails, <String>[_existingEmail]);
+      expect(auth.currentUserId, _existingUserId);
+      expect(profiles.loadCalls, 2);
+      expect(appState.profile?.name, 'Alex Carter');
+      expect(find.byType(HomeDashboardScreen), findsOneWidget);
     });
   });
 

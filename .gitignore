@@ -57,5 +57,24 @@ firebase-debug.log
 firebase-debug.*.log
 ui-debug.log
 
+# Local environment and credential files (safe examples remain trackable)
+.env
+.env.*
+!.env.example
+!*.env.example
+**/*service-account*.json
+**/*service_account*.json
+**/*serviceAccount*.json
+**/*firebase-adminsdk*.json
+**/*firebase-admin-credential*.json
+**/*firebase_admin_credential*.json
+**/*private-key*.json
+**/*private_key*.json
+**/key.properties
+**/*.jks
+**/*.keystore
+**/*.p12
+**/*.pfx
+
 .vscode/
 android/build/

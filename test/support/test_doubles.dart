@@ -255,6 +255,14 @@ class FakeMealRepository implements MealRepository {
   /// How many times a save was attempted, so tests can spot duplicate writes.
   int saveCalls = 0;
 
+  /// Ids allocated and submitted by new-meal screens, in call order.
+  final List<String> allocatedMealIds = <String>[];
+  final List<String?> submittedMealIds = <String?>[];
+
+  /// Fails after storing the meal, modelling a commit whose acknowledgement
+  /// was lost on the way back to the app.
+  MealRepositoryFailure? saveFailureAfterCommit;
+
   /// Ids passed to [deleteMeal], newest last.
   final List<String> deletedIds = <String>[];
 
@@ -301,7 +309,9 @@ class FakeMealRepository implements MealRepository {
       ..sort((SavedMeal a, SavedMeal b) => b.createdAt.compareTo(a.createdAt));
   }
 
-  void dispose() => _changes.close();
+  void dispose() {
+    if (!_changes.isClosed) _changes.close();
+  }
 
   /// When set, every live meal stream reports this instead of meals.
   MealRepositoryFailure? watchFailure;
@@ -385,8 +395,20 @@ class FakeMealRepository implements MealRepository {
   }
 
   @override
-  Future<String> saveMeal(ReviewedMeal meal, {String? mealId}) async {
+  String allocateMealId() {
+    final String id = 'allocated-meal-${allocatedMealIds.length + 1}';
+    allocatedMealIds.add(id);
+    return id;
+  }
+
+  @override
+  Future<String> saveMeal(
+    ReviewedMeal meal, {
+    String? mealId,
+    DateTime? createdAt,
+  }) async {
     saveCalls++;
+    submittedMealIds.add(mealId);
     final MealRepositoryFailure? failure = saveFailure;
     if (failure != null) throw failure;
 
@@ -398,13 +420,16 @@ class FakeMealRepository implements MealRepository {
       aiEstimate: meal.aiEstimate,
       current: meal.current,
       isEdited: meal.isEdited,
-      createdAt: DateTime.now(),
+      createdAt: createdAt ?? DateTime.now(),
     );
 
     // Writing to a known id replaces that meal instead of adding another.
     _meals.removeWhere((SavedMeal existing) => existing.id == id);
     _meals.add(saved);
     _changes.add(_sorted());
+
+    final MealRepositoryFailure? ambiguousFailure = saveFailureAfterCommit;
+    if (ambiguousFailure != null) throw ambiguousFailure;
     return id;
   }
 
@@ -517,6 +542,10 @@ class FakeProfileRepository implements ProfileRepository {
   /// Set to make every read and write fail, so error paths can be tested.
   ProfileRepositoryFailure? failure;
 
+  /// Holds profile reads open so account-transition tests can inspect the
+  /// state after Auth succeeds but before Firestore answers.
+  Completer<void>? loadGate;
+
   int saveCalls = 0;
   int updateCalls = 0;
   int loadCalls = 0;
@@ -526,6 +555,8 @@ class FakeProfileRepository implements ProfileRepository {
   @override
   Future<UserProfile?> getProfile() async {
     loadCalls++;
+    final Completer<void>? gate = loadGate;
+    if (gate != null) await gate.future;
     final ProfileRepositoryFailure? error = failure;
     if (error != null) throw error;
     return storedProfile;

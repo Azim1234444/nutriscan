@@ -14,11 +14,45 @@ import {
 } from "../src/ai/gemini-client";
 import { MAX_IMAGE_BYTES } from "../src/types/nutrition";
 
-/** A short but structurally valid base64 payload. */
-const VALID_BASE64 = Buffer.from("pretend-jpeg-bytes").toString("base64");
+function jpegBytes(size = 8): Buffer {
+  const bytes = Buffer.alloc(size);
+  bytes.set([0xff, 0xd8, 0xff, 0xe0], 0);
+  bytes.set([0xff, 0xd9], size - 2);
+  return bytes;
+}
+
+function pngBytes(size = 33): Buffer {
+  const bytes = Buffer.alloc(size);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  bytes.writeUInt32BE(13, 8);
+  bytes.write("IHDR", 12, "ascii");
+  bytes.writeUInt32BE(1, 16);
+  bytes.writeUInt32BE(1, 20);
+  bytes[24] = 8;
+  bytes[25] = 2;
+  return bytes;
+}
+
+function webpBytes(): Buffer {
+  const bytes = Buffer.alloc(30);
+  bytes.write("RIFF", 0, "ascii");
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write("WEBP", 8, "ascii");
+  bytes.write("VP8X", 12, "ascii");
+  bytes.writeUInt32LE(10, 16);
+  return bytes;
+}
+
+function asBase64(bytes: Buffer): string {
+  return bytes.toString("base64");
+}
+
+const VALID_JPEG_BASE64 = asBase64(jpegBytes());
+const VALID_PNG_BASE64 = asBase64(pngBytes());
+const VALID_WEBP_BASE64 = asBase64(webpBytes());
 
 const VALID_REQUEST = {
-  imageBase64: VALID_BASE64,
+  imageBase64: VALID_JPEG_BASE64,
   mimeType: "image/jpeg",
 };
 
@@ -72,10 +106,8 @@ function failingWith(error: Error): MockGeminiClient {
  * Builds a base64 string that decodes to exactly [bytes] bytes, padding
  * included, so the size limit can be tested to the byte.
  */
-function base64OfSize(bytes: number): string {
-  const groups = Math.ceil(bytes / 3);
-  const padding = groups * 3 - bytes;
-  return "A".repeat(groups * 4 - padding) + "=".repeat(padding);
+function jpegBase64OfSize(bytes: number): string {
+  return asBase64(jpegBytes(bytes));
 }
 
 /** Asserts the request was rejected as `invalid-argument`. */
@@ -108,15 +140,61 @@ async function expectFailure(
 }
 
 describe("validateAnalyzeFoodImageRequest", () => {
-  it("accepts a valid request for every supported mime type", () => {
-    for (const mimeType of ["image/jpeg", "image/png", "image/webp"]) {
+  it("accepts valid JPEG, PNG, and WebP image headers", () => {
+    for (const [mimeType, imageBase64] of [
+      ["image/jpeg", VALID_JPEG_BASE64],
+      ["image/png", VALID_PNG_BASE64],
+      ["image/webp", VALID_WEBP_BASE64],
+    ] as const) {
       const result = validateAnalyzeFoodImageRequest({
-        imageBase64: VALID_BASE64,
+        imageBase64,
         mimeType,
       });
 
-      expect(result.imageBase64).toBe(VALID_BASE64);
+      expect(result.imageBase64).toBe(imageBase64);
       expect(result.mimeType).toBe(mimeType);
+    }
+  });
+
+  it("rejects image bytes that do not match the declared mime type", () => {
+    for (const [mimeType, imageBase64] of [
+      ["image/png", VALID_JPEG_BASE64],
+      ["image/webp", VALID_JPEG_BASE64],
+      ["image/jpeg", VALID_PNG_BASE64],
+      ["image/webp", VALID_PNG_BASE64],
+      ["image/jpeg", VALID_WEBP_BASE64],
+      ["image/png", VALID_WEBP_BASE64],
+    ] as const) {
+      expectRejected(() =>
+        validateAnalyzeFoodImageRequest({ imageBase64, mimeType }),
+      );
+    }
+  });
+
+  it("rejects random bytes encoded as base64", () => {
+    expectRejected(() =>
+      validateAnalyzeFoodImageRequest({
+        imageBase64: asBase64(Buffer.from("random bytes, not an image")),
+        mimeType: "image/jpeg",
+      }),
+    );
+  });
+
+  it("rejects truncated JPEG, PNG, and WebP headers", () => {
+    for (const [mimeType, bytes] of [
+      ["image/jpeg", Buffer.from([0xff, 0xd8, 0xff])],
+      [
+        "image/png",
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      ],
+      ["image/webp", Buffer.from("RIFF\x04\x00\x00\x00WEBP", "binary")],
+    ] as const) {
+      expectRejected(() =>
+        validateAnalyzeFoodImageRequest({
+          imageBase64: asBase64(bytes),
+          mimeType,
+        }),
+      );
     }
   });
 
@@ -146,7 +224,7 @@ describe("validateAnalyzeFoodImageRequest", () => {
     for (const mimeType of ["image/gif", "application/pdf", "text/plain", ""]) {
       expectRejected(() =>
         validateAnalyzeFoodImageRequest({
-          imageBase64: VALID_BASE64,
+          imageBase64: VALID_JPEG_BASE64,
           mimeType,
         }),
       );
@@ -161,9 +239,9 @@ describe("validateAnalyzeFoodImageRequest", () => {
       42,
       [],
       { imageBase64: 123, mimeType: "image/jpeg" },
-      { imageBase64: VALID_BASE64 },
+      { imageBase64: VALID_JPEG_BASE64 },
       {
-        imageBase64: `data:image/jpeg;base64,${VALID_BASE64}`,
+        imageBase64: `data:image/jpeg;base64,${VALID_JPEG_BASE64}`,
         mimeType: "image/jpeg",
       },
       { imageBase64: "not base64!!", mimeType: "image/png" },
@@ -175,7 +253,7 @@ describe("validateAnalyzeFoodImageRequest", () => {
   });
 
   it("rejects an oversized image", () => {
-    const tooLarge = base64OfSize(MAX_IMAGE_BYTES + 1);
+    const tooLarge = jpegBase64OfSize(MAX_IMAGE_BYTES + 1);
 
     expect(decodedSizeInBytes(tooLarge)).toBe(MAX_IMAGE_BYTES + 1);
     const error = expectRejected(() =>
@@ -188,7 +266,7 @@ describe("validateAnalyzeFoodImageRequest", () => {
   });
 
   it("accepts an image right at the size limit", () => {
-    const atLimit = base64OfSize(MAX_IMAGE_BYTES);
+    const atLimit = jpegBase64OfSize(MAX_IMAGE_BYTES);
 
     expect(decodedSizeInBytes(atLimit)).toBe(MAX_IMAGE_BYTES);
     expect(() =>
@@ -234,7 +312,7 @@ describe("handleAnalyzeFoodImage", () => {
     await handleAnalyzeFoodImage(signedInCall(VALID_REQUEST), client);
 
     expect(client.calls).toEqual([
-      { data: VALID_BASE64, mimeType: "image/jpeg" },
+      { data: VALID_JPEG_BASE64, mimeType: "image/jpeg" },
     ]);
   });
 
@@ -281,8 +359,24 @@ describe("handleAnalyzeFoodImage", () => {
       { ...FOOD_RESPONSE, confidence: 42 },
       { ...FOOD_RESPONSE, food_name: "" },
       { ...FOOD_RESPONSE, assumptions: "none" },
+      { ...FOOD_RESPONSE, assumptions: ["", "visible dressing"] },
+      { ...FOOD_RESPONSE, assumptions: Array(4).fill("portion estimated") },
+      { ...FOOD_RESPONSE, assumptions: ["x".repeat(501)] },
       { ...FOOD_RESPONSE, items: [{ name: "Rice" }] },
       { ...FOOD_RESPONSE, items: [{ estimated_portion_grams: 100 }] },
+      {
+        ...FOOD_RESPONSE,
+        items: Array(6).fill({ name: "Rice", estimated_portion_grams: 100 }),
+      },
+      {
+        ...FOOD_RESPONSE,
+        items: [{ name: "x".repeat(201), estimated_portion_grams: 100 }],
+      },
+      {
+        ...FOOD_RESPONSE,
+        assumptions: Array(3).fill("portion estimated"),
+        items: Array(4).fill({ name: "Rice", estimated_portion_grams: 100 }),
+      },
     ];
 
     for (const value of malformed) {
@@ -346,6 +440,29 @@ describe("handleAnalyzeFoodImage", () => {
       "invalid-argument",
     );
     expect(client.calls).toHaveLength(0);
+  });
+
+  it("never calls the model when decoded image validation fails", async () => {
+    const invalidRequests = [
+      {
+        imageBase64: asBase64(Buffer.from("random bytes")),
+        mimeType: "image/jpeg",
+      },
+      { imageBase64: VALID_JPEG_BASE64, mimeType: "image/png" },
+      {
+        imageBase64: asBase64(Buffer.from([0xff, 0xd8, 0xff])),
+        mimeType: "image/jpeg",
+      },
+    ];
+
+    for (const request of invalidRequests) {
+      const client = respondingWith(FOOD_RESPONSE);
+      await expectFailure(
+        () => handleAnalyzeFoodImage(signedInCall(request), client),
+        "invalid-argument",
+      );
+      expect(client.calls).toHaveLength(0);
+    }
   });
 });
 
@@ -413,11 +530,11 @@ describe("authentication is enforced", () => {
   });
 
   it("still rejects a bad request from a signed-in caller", async () => {
-    const oversized = base64OfSize(MAX_IMAGE_BYTES + 1);
+    const oversized = jpegBase64OfSize(MAX_IMAGE_BYTES + 1);
 
     for (const data of [
       { imageBase64: "", mimeType: "image/jpeg" },
-      { imageBase64: VALID_BASE64, mimeType: "image/gif" },
+      { imageBase64: VALID_JPEG_BASE64, mimeType: "image/gif" },
       { imageBase64: "not base64!!", mimeType: "image/png" },
       { imageBase64: oversized, mimeType: "image/jpeg" },
     ]) {

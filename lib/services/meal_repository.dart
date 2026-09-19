@@ -56,11 +56,23 @@ abstract class MealRepository {
   /// would silently leave meals out of the sum.
   Stream<List<SavedMeal>> watchRecentMeals({int limit});
 
+  /// Allocates a Firestore-compatible id without writing a document.
+  ///
+  /// A new-meal screen keeps this id before its first write and supplies it
+  /// to every retry, so an uncertain result can never become two documents.
+  String allocateMealId();
+
   /// Saves [meal] and returns the document id.
   ///
-  /// Passing the id returned by an earlier attempt overwrites that document
-  /// instead of adding a second one, which makes a retry safe.
-  Future<String> saveMeal(ReviewedMeal meal, {String? mealId});
+  /// A caller creating a new meal should first call [allocateMealId], then
+  /// pass that id and one stable [createdAt] value to every attempt. Passing
+  /// an id without [createdAt] retains the older "update an existing meal"
+  /// behavior for callers that already have a stored document.
+  Future<String> saveMeal(
+    ReviewedMeal meal, {
+    String? mealId,
+    DateTime? createdAt,
+  });
 
   /// Writes a correction to a meal that is already stored.
   ///
@@ -248,14 +260,26 @@ class FirestoreMealRepository implements MealRepository {
   }
 
   @override
-  Future<String> saveMeal(ReviewedMeal meal, {String? mealId}) async {
+  String allocateMealId() {
+    // Firestore auto ids are random and do not depend on the collection path.
+    // Building this reference performs no read or write and remains safe if
+    // Auth has not yet created the anonymous session used by the later save.
+    final String ownerPath = _auth.currentUserId ?? '_pending';
+    return _mealsRef(ownerPath).doc().id;
+  }
+
+  @override
+  Future<String> saveMeal(
+    ReviewedMeal meal, {
+    String? mealId,
+    DateTime? createdAt,
+  }) async {
     try {
       final String userId = await _auth.ensureSignedIn();
 
-      // An id supplied by the caller names a document this screen has already
-      // written, so this is a re-save of that meal rather than a new one.
-      final bool isNew = mealId == null;
-      final DocumentReference<Map<String, dynamic>> document = isNew
+      final bool usesAutomaticId = mealId == null;
+      final bool usesPreallocatedId = mealId != null && createdAt != null;
+      final DocumentReference<Map<String, dynamic>> document = usesAutomaticId
           ? _mealsRef(userId).doc()
           : _mealsRef(userId).doc(mealId);
 
@@ -263,15 +287,21 @@ class FirestoreMealRepository implements MealRepository {
         mealToDocument(
           meal,
           userId: userId,
-          mealType: SavedMeal.mealTypeForTime(DateTime.now()),
-          // Only the first write stamps the time the meal was logged. A
-          // re-save leaves it alone, so correcting an estimate cannot move the
-          // meal to a later day - and cannot be refused by the rules, which
-          // hold `createdAt` immutable once a document exists.
-          createdAt: isNew ? FieldValue.serverTimestamp() : null,
+          mealType: SavedMeal.mealTypeForTime(
+            (createdAt ?? DateTime.now()).toLocal(),
+          ),
+          // Auto-id callers keep the existing server timestamp behavior.
+          // A preallocated id uses the same timestamp on every attempt, so a
+          // merge can create a missing document or overwrite an acknowledged
+          // one without changing its immutable history position.
+          createdAt: usesAutomaticId
+              ? FieldValue.serverTimestamp()
+              : usesPreallocatedId
+              ? Timestamp.fromDate(createdAt)
+              : null,
           updatedAt: FieldValue.serverTimestamp(),
         ),
-        SetOptions(merge: !isNew),
+        SetOptions(merge: !usesAutomaticId),
       );
 
       return document.id;

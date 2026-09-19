@@ -48,10 +48,16 @@ function validMeal(userId: string) {
     description: nutrition.description,
     mealType: "lunch",
     estimatedPortionGrams: nutrition.estimatedPortionGrams,
-    aiEstimate: { ...nutrition, confidence: 0.85, assumptions: [], items: [] },
+    aiEstimate: {
+      ...nutrition,
+      confidence: 0.85,
+      assumptions: [] as string[],
+      items: [] as Array<{ name: string; estimatedPortionGrams: number }>,
+    },
     current: nutrition,
     isEdited: false,
     createdAt: new Date(),
+    updatedAt: new Date(),
   };
 }
 
@@ -273,6 +279,281 @@ describe("firestore rules", () => {
         userA.doc("users/user-a/meals/meal-1").set(validMeal("user-a")),
       );
     });
+
+    it("accepts every supported meal type", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const mealType of ["breakfast", "lunch", "dinner", "snack"]) {
+        await assertSucceeds(
+          userA
+            .doc(`users/user-a/meals/${mealType}`)
+            .set({ ...validMeal("user-a"), mealType }),
+        );
+      }
+    });
+
+    it("rejects unexpected top-level and nested fields", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const withTopLevelField = { ...validMeal("user-a"), admin: true };
+      const withCurrentField = validMeal("user-a");
+      withCurrentField.current = {
+        ...withCurrentField.current,
+        sodium: 400,
+      } as typeof withCurrentField.current;
+      const withAiField = validMeal("user-a");
+      withAiField.aiEstimate = {
+        ...withAiField.aiEstimate,
+        rawResponse: "hidden",
+      } as typeof withAiField.aiEstimate;
+
+      for (const [index, meal] of [
+        withTopLevelField,
+        withCurrentField,
+        withAiField,
+      ].entries()) {
+        await assertFails(
+          userA.doc(`users/user-a/meals/extra-${index}`).set(meal),
+        );
+      }
+    });
+
+    it("rejects missing top-level and nested required fields", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const missingCreatedAt = { ...validMeal("user-a") };
+      delete (missingCreatedAt as Partial<typeof missingCreatedAt>).createdAt;
+      const missingUpdatedAt = { ...validMeal("user-a") };
+      delete (missingUpdatedAt as Partial<typeof missingUpdatedAt>).updatedAt;
+      const missingCurrentCalories = validMeal("user-a");
+      delete (missingCurrentCalories.current as Partial<
+        typeof missingCurrentCalories.current
+      >).calories;
+      const missingAiItems = validMeal("user-a");
+      delete (missingAiItems.aiEstimate as Partial<
+        typeof missingAiItems.aiEstimate
+      >).items;
+
+      for (const [index, meal] of [
+        missingCreatedAt,
+        missingUpdatedAt,
+        missingCurrentCalories,
+        missingAiItems,
+      ].entries()) {
+        await assertFails(
+          userA.doc(`users/user-a/meals/missing-${index}`).set(meal),
+        );
+      }
+    });
+
+    it("rejects wrong scalar and timestamp types", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const [index, broken] of [
+        { foodName: 42 },
+        { description: false },
+        { mealType: 1 },
+        { estimatedPortionGrams: "320" },
+        { isEdited: "false" },
+        { createdAt: "today" },
+        { updatedAt: 1234 },
+      ].entries()) {
+        await assertFails(
+          userA
+            .doc(`users/user-a/meals/type-${index}`)
+            .set({ ...validMeal("user-a"), ...broken }),
+        );
+      }
+    });
+
+    it("rejects unsupported meal types", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const mealType of ["brunch", "Breakfast", "", null]) {
+        await assertFails(
+          userA
+            .doc(`users/user-a/meals/enum-${String(mealType)}`)
+            .set({ ...validMeal("user-a"), mealType }),
+        );
+      }
+    });
+
+    it("rejects oversized meal strings", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const longName = "n".repeat(201);
+      const longDescription = "d".repeat(1001);
+      const badName = validMeal("user-a");
+      badName.foodName = longName;
+      badName.current.foodName = longName;
+      badName.isEdited = true;
+      const badDescription = validMeal("user-a");
+      badDescription.description = longDescription;
+      badDescription.current.description = longDescription;
+      badDescription.isEdited = true;
+      const badAiName = validMeal("user-a");
+      badAiName.aiEstimate.foodName = longName;
+
+      for (const [index, meal] of [
+        badName,
+        badDescription,
+        badAiName,
+      ].entries()) {
+        await assertFails(
+          userA.doc(`users/user-a/meals/text-${index}`).set(meal),
+        );
+      }
+    });
+
+    it("accepts meal strings at their exact limits", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const meal = validMeal("user-a");
+      meal.foodName = "n".repeat(200);
+      meal.current.foodName = meal.foodName;
+      meal.aiEstimate.foodName = meal.foodName;
+      meal.description = "d".repeat(1000);
+      meal.current.description = meal.description;
+      meal.aiEstimate.description = meal.description;
+
+      await assertSucceeds(
+        userA.doc("users/user-a/meals/text-boundary").set(meal),
+      );
+    });
+
+    it("rejects negative and extreme nutrition values", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const invalidValues: Array<[string, number]> = [
+        ["estimatedPortionGrams", -1],
+        ["estimatedPortionGrams", 10001],
+        ["calories", 20001],
+        ["proteinGrams", 2001],
+        ["carbohydratesGrams", 5001],
+        ["fatGrams", 2001],
+        ["fiberGrams", 1001],
+      ];
+
+      for (const [index, [field, value]] of invalidValues.entries()) {
+        const meal = validMeal("user-a");
+        meal.current = { ...meal.current, [field]: value };
+        await assertFails(
+          userA.doc(`users/user-a/meals/number-${index}`).set(meal),
+        );
+      }
+    });
+
+    it("rejects confidence outside zero through one", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const confidence of [-0.01, 1.01, "high", null]) {
+        const meal = validMeal("user-a");
+        meal.aiEstimate = { ...meal.aiEstimate, confidence } as never;
+        await assertFails(
+          userA
+            .doc(`users/user-a/meals/confidence-${String(confidence)}`)
+            .set(meal),
+        );
+      }
+    });
+
+    it("bounds and validates every assumption", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const assumptions of [
+        Array(4).fill("assumption"),
+        ["a".repeat(501)],
+        [""],
+        [42],
+        "not-a-list",
+      ]) {
+        const meal = validMeal("user-a");
+        meal.aiEstimate = { ...meal.aiEstimate, assumptions } as never;
+        await assertFails(
+          userA.doc("users/user-a/meals/bad-assumptions").set(meal),
+        );
+      }
+    });
+
+    it("bounds and validates every nested meal item", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const validItem = { name: "Chicken", estimatedPortionGrams: 150 };
+
+      for (const items of [
+        Array(6).fill(validItem),
+        [{ ...validItem, extra: true }],
+        [{ name: "Chicken" }],
+        [{ name: "", estimatedPortionGrams: 1 }],
+        [{ name: "n".repeat(201), estimatedPortionGrams: 1 }],
+        [{ name: "Chicken", estimatedPortionGrams: -1 }],
+        [{ name: "Chicken", estimatedPortionGrams: 10001 }],
+        ["Chicken"],
+        "not-a-list",
+      ]) {
+        const meal = validMeal("user-a");
+        meal.aiEstimate = { ...meal.aiEstimate, items } as never;
+        await assertFails(userA.doc("users/user-a/meals/bad-items").set(meal));
+      }
+    });
+
+    it("accepts bounded assumptions and nested items", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const [index, [assumptionCount, itemCount]] of [
+        [3, 3],
+        [1, 5],
+      ].entries()) {
+        const meal = validMeal("user-a");
+        meal.aiEstimate.assumptions = Array(assumptionCount).fill(
+          "A short assumption.",
+        );
+        meal.aiEstimate.items = Array.from({ length: itemCount }, (_, item) => ({
+          name: `Ingredient ${item + 1}`,
+          estimatedPortionGrams: 10,
+        }));
+
+        await assertSucceeds(
+          userA.doc(`users/user-a/meals/list-boundary-${index}`).set(meal),
+        );
+      }
+    });
+
+    it("rejects too many combined AI metadata entries", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const meal = validMeal("user-a");
+      meal.aiEstimate.assumptions = Array(3).fill("A short assumption.");
+      meal.aiEstimate.items = Array.from({ length: 4 }, (_, index) => ({
+        name: `Ingredient ${index + 1}`,
+        estimatedPortionGrams: 10,
+      }));
+
+      await assertFails(
+        userA.doc("users/user-a/meals/combined-list-limit").set(meal),
+      );
+    });
+
+    it("requires duplicated values to stay consistent", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const meal of [
+        { ...validMeal("user-a"), foodName: "Different" },
+        { ...validMeal("user-a"), description: "Different" },
+        { ...validMeal("user-a"), estimatedPortionGrams: 999 },
+      ]) {
+        await assertFails(
+          userA.doc("users/user-a/meals/inconsistent").set(meal),
+        );
+      }
+    });
+
+    it("allows an idempotent retry with the same id and createdAt", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const meal = validMeal("user-a");
+      const mealRef = userA.doc("users/user-a/meals/stable-id");
+
+      await assertSucceeds(mealRef.set(meal, { merge: true }));
+      await assertSucceeds(
+        mealRef.set({ ...meal, updatedAt: new Date() }, { merge: true }),
+      );
+
+      const stored = await mealRef.get();
+      expect(stored.data()?.createdAt.toDate()).toEqual(meal.createdAt);
+    });
   });
 
   describe("meal updates", () => {
@@ -455,7 +736,7 @@ describe("firestore rules", () => {
       expect(stored.data()?.userId).toBe("user-b");
       expect(stored.data()?.current.calories).toBe(580);
       expect(stored.data()?.isEdited).toBe(false);
-      expect(stored.data()?.updatedAt).toBeUndefined();
+      expect(stored.data()?.updatedAt).toBeDefined();
     });
 
     /**
@@ -715,9 +996,14 @@ describe("firestore profile rules", () => {
     it("but can do all of that with their own profile", async () => {
       const userB = testEnv.authenticatedContext("user-b").firestore();
 
-      await assertSucceeds(userB.doc("users/user-b/profile/current").get());
+      const before = await assertSucceeds(
+        userB.doc("users/user-b/profile/current").get(),
+      );
       await assertSucceeds(
-        userB.doc("users/user-b/profile/current").set(validProfile("user-b")),
+        userB.doc("users/user-b/profile/current").set({
+          ...validProfile("user-b"),
+          createdAt: before.data()?.createdAt,
+        }),
       );
       await assertSucceeds(userB.doc("users/user-b/profile/current").delete());
     });
@@ -790,5 +1076,200 @@ describe("firestore profile rules", () => {
         userA.doc("users/user-a/profile/current").set(validProfile("user-a")),
       );
     });
+
+    it("rejects unexpected fields and missing required fields", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const unexpected = { ...validProfile("user-a"), role: "admin" };
+      const missingCreatedAt = { ...validProfile("user-a") };
+      delete (missingCreatedAt as Partial<typeof missingCreatedAt>).createdAt;
+      const missingTarget = { ...validProfile("user-a") };
+      delete (missingTarget as Partial<typeof missingTarget>).dailyCalories;
+
+      for (const profile of [unexpected, missingCreatedAt, missingTarget]) {
+        await assertFails(
+          userA.doc("users/user-a/profile/current").set(profile),
+        );
+      }
+    });
+
+    it("rejects wrong profile field types", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const broken of [
+        { uid: 123 },
+        { name: false },
+        { age: 28.5 },
+        { heightCm: "175" },
+        { weightKg: "70" },
+        { dailyCalories: "2570" },
+        { proteinGrams: null },
+      ]) {
+        await assertFails(
+          userA
+            .doc("users/user-a/profile/current")
+            .set({ ...validProfile("user-a"), ...broken }),
+        );
+      }
+    });
+
+    it("accepts all supported profile enum values", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const profileRef = userA.doc("users/user-a/profile/current");
+
+      for (const gender of ["male", "female", "other"]) {
+        await assertSucceeds(
+          profileRef.set({ ...validProfile("user-a"), gender }),
+        );
+        await assertSucceeds(profileRef.delete());
+      }
+      for (const activityLevel of [
+        "sedentary",
+        "light",
+        "moderate",
+        "active",
+        "athlete",
+      ]) {
+        await assertSucceeds(
+          profileRef.set({ ...validProfile("user-a"), activityLevel }),
+        );
+        await assertSucceeds(profileRef.delete());
+      }
+      for (const goal of ["lose", "maintain", "gain"]) {
+        await assertSucceeds(
+          profileRef.set({ ...validProfile("user-a"), goal }),
+        );
+        await assertSucceeds(profileRef.delete());
+      }
+    });
+
+    it("rejects unsupported profile enum values", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const broken of [
+        { gender: "unknown" },
+        { gender: "Male" },
+        { activityLevel: "extreme" },
+        { activityLevel: "Moderate" },
+        { goal: "bulk" },
+        { goal: "Maintain" },
+      ]) {
+        await assertFails(
+          userA
+            .doc("users/user-a/profile/current")
+            .set({ ...validProfile("user-a"), ...broken }),
+        );
+      }
+    });
+
+    it("enforces the profile name limit", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      await assertSucceeds(
+        userA
+          .doc("users/user-a/profile/current")
+          .set({ ...validProfile("user-a"), name: "n".repeat(100) }),
+      );
+      await assertSucceeds(
+        userA.doc("users/user-a/profile/current").delete(),
+      );
+      await assertFails(
+        userA
+          .doc("users/user-a/profile/current")
+          .set({ ...validProfile("user-a"), name: "n".repeat(101) }),
+      );
+    });
+
+    it("rejects every out-of-range profile number", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const broken of [
+        { age: 9 },
+        { age: 101 },
+        { heightCm: 99.9 },
+        { heightCm: 250.1 },
+        { weightKg: 29.9 },
+        { weightKg: 300.1 },
+        { dailyCalories: -1 },
+        { dailyCalories: 10001 },
+        { proteinGrams: -1 },
+        { proteinGrams: 601 },
+        { carbohydratesGrams: -1 },
+        { carbohydratesGrams: 2001 },
+        { fatGrams: -1 },
+        { fatGrams: 501 },
+      ]) {
+        await assertFails(
+          userA
+            .doc("users/user-a/profile/current")
+            .set({ ...validProfile("user-a"), ...broken }),
+        );
+      }
+    });
+
+    it("requires creation and update timestamps", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+
+      for (const broken of [
+        { createdAt: "today" },
+        { createdAt: 0 },
+        { updatedAt: "today" },
+        { updatedAt: 0 },
+      ]) {
+        await assertFails(
+          userA
+            .doc("users/user-a/profile/current")
+            .set({ ...validProfile("user-a"), ...broken }),
+        );
+      }
+    });
+
+    it("allows profile updates but keeps createdAt immutable", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const profileRef = userA.doc("users/user-a/profile/current");
+      const profile = validProfile("user-a");
+      await assertSucceeds(profileRef.set(profile));
+
+      await assertSucceeds(
+        profileRef.update({ name: "Updated Name", updatedAt: new Date() }),
+      );
+      await assertFails(
+        profileRef.update({
+          createdAt: new Date("2020-01-01T00:00:00.000Z"),
+          updatedAt: new Date(),
+        }),
+      );
+    });
+
+    it("cannot replace a profile with an incomplete document", async () => {
+      const userA = testEnv.authenticatedContext("user-a").firestore();
+      const profileRef = userA.doc("users/user-a/profile/current");
+      await assertSucceeds(profileRef.set(validProfile("user-a")));
+
+      await assertFails(
+        profileRef.set({
+          uid: "user-a",
+          name: "Incomplete",
+          updatedAt: new Date(),
+        }),
+      );
+    });
+  });
+
+  it("denies profile ids other than current", async () => {
+    const userA = testEnv.authenticatedContext("user-a").firestore();
+    const otherProfile = userA.doc("users/user-a/profile/other");
+
+    await assertFails(otherProfile.get());
+    await assertFails(otherProfile.set(validProfile("user-a")));
+    await assertFails(otherProfile.delete());
+  });
+
+  it("denies the direct user document even to its owner", async () => {
+    const userA = testEnv.authenticatedContext("user-a").firestore();
+    const userDocument = userA.doc("users/user-a");
+
+    await assertFails(userDocument.get());
+    await assertFails(userDocument.set({ uid: "user-a" }));
+    await assertFails(userDocument.delete());
   });
 });
